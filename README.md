@@ -1,0 +1,2 @@
+# wag
+Wag programming language
