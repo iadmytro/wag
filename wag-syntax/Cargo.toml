@@ -1,0 +1,13 @@
+[package]
+name = "wag-syntax"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "WAG lexer and parser (chumsky), layout preprocessing, desugaring"
+
+[dependencies]
+chumsky = { workspace = true }
+ariadne = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }

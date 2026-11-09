@@ -1,0 +1,8 @@
+export
+  quadruple
+
+import
+  leaf
+    triple
+
+quadruple = x -> triple (triple x)

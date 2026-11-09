@@ -1,0 +1,5 @@
+-- Negative: region-resident types may not appear in inter-actor message types (§4.3.5).
+RNode = REnd | RNodeC val Int next (Ref RNode)
+RH = RH head (Ref RNode) len Int
+
+bad = &RH, Actor RH -> Unit: h, target -> target@ h

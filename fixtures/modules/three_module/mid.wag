@@ -1,0 +1,8 @@
+export
+  add_one
+
+import
+  base
+    base_val
+
+add_one = x -> x + base_val

@@ -1,0 +1,39 @@
+-- Spec §8.20 (migrated to List, D062 cursor model): the higher-order cycle
+-- now runs through prelude map/hMapLoop instead of a local map/mapHelper —
+-- same shape: hMapLoop's edge to its `f` parameter is non-tail by
+-- construction (`out.append (f v)`), so no rewrite of badApply/recur can make
+-- the cycle legal.
+
+increment = Int -> Int: x -> x + 1
+
+negate = Int -> Int: x -> 0 - x
+
+-- map's edge to its `f` parameter is {increment, negate} here. Neither
+-- increment nor negate ever calls map (or anything that calls it), so no
+-- cycle passes through that edge — both uses are unrestricted, and neither
+-- needs to be in tail position.
+useBoth = List Int, List Int -> (List Int, List Int): xs, ys ->
+  incremented = map increment xs
+  negated = map negate ys
+  (incremented, negated)
+
+
+-- REJECTED. badApply is passed to map inside recur, so map/hMapLoop's
+-- call-graph edge to `f` now includes badApply too — merged in alongside
+-- increment and negate above, since that edge is one shared program point,
+-- not tracked per call site.
+--
+-- recur's own call to map IS a tail call. That doesn't matter: hMapLoop's
+-- application of f (`out.append (f v)`) is NEVER in tail position, by
+-- construction of the accumulate-then-append idiom (§6.7.3). So the cycle
+--   badApply -> recur -> map -> hMapLoop -> badApply
+-- contains a non-tail edge (hMapLoop's call to f) no matter what badApply
+-- or recur look like — there is no way to rewrite this cycle's own calls
+-- to make it legal, because the offending edge lives inside map itself.
+
+badApply = Int -> Int: x ->
+  l0 = listNew
+  l1 = l0.append x
+  length (recur l1)          -- not tail position: result is used below
+
+recur = List Int -> List Int: xs -> map badApply xs   -- tail call — insufficient on its own, see above

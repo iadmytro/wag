@@ -1,0 +1,14 @@
+-- String literal patterns in match arms (§3 / §9).
+-- Exercises alias resolution: `String` annotation resolves to `Vec Int`,
+-- literal patterns must agree after expansion.
+
+precOf = String -> Int: op ->
+  match op
+    "+" -> 4
+    "-" -> 4
+    "*" -> 5
+    _   -> 0
+
+isPlus = Bool:  -> precOf "+" == 4
+isStar = Bool:  -> precOf "*" == 5
+isOther = Bool:  -> precOf "?" == 0

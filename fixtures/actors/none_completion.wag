@@ -1,0 +1,25 @@
+import
+  prelude
+    ..
+
+-- D081: none completion — task actor terminates immediately, main continues.
+-- Task shape: (Int, TaskMsg) -> Int. Main shape: (Int, MainMsg) -> Int.
+
+TaskMsg = Go
+
+@task = Int, TaskMsg -> Int: state, msg -> match msg
+  Go -> state
+
+MainMsg = Start (List String) | End Int
+
+@main = @std: Int, MainMsg -> Int: st, msg -> match msg
+  Start _ ->
+    t@ = @task 0
+    t@ Go
+    s@ = @std
+    s@ (Write "done")
+    self@ (End 0)
+    0
+  End code -> code
+  Line _ -> st
+  EndOfInput -> st

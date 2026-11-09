@@ -1,0 +1,2 @@
+-- copy on PF types is legal (produces an owned value from a borrow).
+copyInt = Int -> Int: n -> copy n

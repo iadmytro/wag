@@ -1,0 +1,3 @@
+-- Redeclare built-in constructor name
+Foo = True Int
+foo = x -> x

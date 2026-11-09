@@ -1,0 +1,10 @@
+-- Spec §5.5.2 — minimal @-declaration, no pragma
+
+CounterMsg = Increment | Get (Actor ReplyMsg)
+ReplyMsg = CountIs Int
+
+@counter = Int, CounterMsg -> Int: state, msg -> match msg
+  Increment -> state + 1
+  Get replyTo ->
+    replyTo@ (CountIs (copy state))
+    state

@@ -1,0 +1,31 @@
+-- Spec §8.19 (transcribed from wag-language-spec.md)
+-- Contains variants rejected later by wag-check; must still parse
+
+-- isEvenHelper and isOddHelper form a 2-cycle. Both calls are the last thing
+-- their branch does, so both edges are tail calls — the cycle is entirely
+-- tail, and §7 rule 1 accepts it exactly as it would a single self-recursive
+-- function. Under the trampoline (§4.6.4), this cycle costs one Rust stack
+-- frame regardless of how many times it iterates.
+
+isEvenHelper = Int -> Bool: n -> if
+  n == 0 -> True
+  _ -> isOddHelper (n - 1)      -- tail call
+
+isOddHelper = Int -> Bool: n -> if
+  n == 0 -> False
+  _ -> isEvenHelper (n - 1)     -- tail call — closes the cycle, still tail position
+
+
+-- REJECTED. pingBad -> pongBad -> pingBad is a 2-cycle, same shape as above.
+-- pongBad's call back to pingBad IS a tail call — but pingBad's call to
+-- pongBad is NOT: the result r is used (r + 1) after pongBad returns. A
+-- cycle is illegal the moment ANY one of its edges is non-tail; the other
+-- edge being a clean tail call doesn't rescue it.
+
+pingBad = Int -> Int: n -> if
+  n == 0 -> 0
+  _ -> (pongBad (n - 1)) + 1    -- NOT tail position: result is used below
+
+pongBad = Int -> Int: n -> if
+  n == 0 -> 0
+  _ -> pingBad (n - 1)          -- tail call — but this alone can't save the cycle

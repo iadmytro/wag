@@ -1,0 +1,38 @@
+-- Spec §8.7 (migrated to List, D062 cursor model): the consuming `filter` is a
+-- one-line wrapper over prelude `filter` (popFirst steps); the peek/step variant
+-- filters without touching the input list — it stays reusable afterwards.
+
+isPositive = Int -> Bool: x -> x > 0
+
+specFilter = (Int -> Bool), List Int -> List Int: pred, lst -> filter pred lst
+
+specFilterPeekStep = (Int -> Bool), List Int, List Int -> List Int: pred, in, out ->
+  match in.peek
+    None   -> out
+    Some v ->
+      match in.step
+        None     -> if pred (copy v) -> out.append v
+                    _         -> out
+        Some i2  -> if pred (copy v) -> specFilterPeekStep pred i2 (out.append v)
+                    _         -> specFilterPeekStep pred i2 out
+
+specFilterPeek = (Int -> Bool), List Int -> List Int: pred, lst ->
+  out0 = listNew
+  specFilterPeekStep pred lst out0
+
+buildThree = List Int: ->
+  h0 = listNew
+  h1 = h0.append 1
+  h2 = h1.append -3
+  h3 = h2.append 7
+  h3
+
+-- (length of filtered, first element of the untouched input) → (2, 1).
+-- rule 10: `specFilterPeek` consumes its owned handle, so pass a copy to keep
+-- `xs` reusable afterwards.
+testReport = (Int, Int): ->
+  xs = buildThree
+  f = specFilterPeek isPositive (copy xs)
+  match xs.peek
+    Some v -> (length f, v)
+    None   -> (-1, -1)

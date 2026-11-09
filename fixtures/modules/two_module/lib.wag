@@ -1,0 +1,6 @@
+export
+  double
+  add
+
+double = x -> x * 2
+add = a, b -> a + b

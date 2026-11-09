@@ -1,0 +1,52 @@
+import
+  prelude
+    ..
+
+-- Spec §8.25 (array bridge: List <-> Array roundtrip)
+-- Tests arrFromList, arrToList, arrGet, arrSet in combination.
+MainMsg = Start (List String) | End Int
+
+checkLen = List Int -> Int: xs -> length xs
+
+roundtripLen = Int:  -> 
+    arr = arrFromList [1, 2, 3]
+    back = arrToList arr
+    checkLen back
+
+getMid = Int:  -> 
+    arr = arrFromList [10, 20, 30]
+    r = arrGet arr 1
+    match r
+      Some v -> v
+      None -> -1
+
+setAndGet = Int:  -> 
+    arr = arrFromList [1, 2, 3]
+    arr2 = arrSet arr 1 99
+    r = arrGet arr2 1
+    match r
+      Some v -> v
+      None -> -1
+
+-- Combined: roundtrip + get + set in one pass
+combined = Int:  -> 
+    arr = arrFromList [10, 20, 30]
+    arr2 = arrSet arr 0 100
+    back = arrToList arr2
+    r = arrGet (arrFromList back) 0
+    match r
+      Some v -> v
+      None -> -1
+
+@main = @std: Int, MainMsg -> Int: st, msg -> match msg
+  Start _ ->
+    s@ = @std
+    s@ (Write (show roundtripLen))
+    s@ (Write (show getMid))
+    s@ (Write (show setAndGet))
+    s@ (Write (show combined))
+    self@ (End 0)
+    0
+  End code -> code
+  Line _ -> st
+  EndOfInput -> st

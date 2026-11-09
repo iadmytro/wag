@@ -1,0 +1,19 @@
+-- Arr T (§3.4 / §6.8): fixed-size, index-addressable, unconditionally non-pointer-free.
+-- `arrNew n` yields an `Arr (Option T)` with all `n` slots empty (`None`).
+-- Each function builds its own array (a linear value is used once per function).
+
+-- Length of a fresh 3-slot array.
+len3 = Int:  -> arrLen (arrNew 3)
+
+-- Slot 0 of a fresh array is empty -> arrGet returns Some None.
+slot0Empty = Option (Option Int):  -> arrGet (arrNew 3) 0
+
+-- Out-of-bounds read -> None (the outer Option).
+oob = Option (Option Int):  -> arrGet (arrNew 3) 5
+
+-- Set slot 0 to Some 42, read it back -> Some (Some 42).
+set0read = Option (Option Int):  -> arrGet (arrSet (arrNew 3) 0 (Some 42)) 0
+
+-- Set slot 2 to Some 7: slot 2 reads Some (Some 7), slot 1 still reads Some None.
+set2read = Option (Option Int):  -> arrGet (arrSet (arrNew 3) 2 (Some 7)) 2
+slot1After = Option (Option Int):  -> arrGet (arrSet (arrNew 3) 2 (Some 7)) 1

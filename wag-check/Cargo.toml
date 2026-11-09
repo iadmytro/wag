@@ -1,0 +1,13 @@
+[package]
+name = "wag-check"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "WAG structural checks: linearity, borrows, field paths, retire, tail cycles, monitor"
+
+[dependencies]
+wag-syntax = { path = "../wag-syntax" }
+wag-types = { path = "../wag-types" }
+
+[dev-dependencies]
+wag-interp = { path = "../wag-interp" }

@@ -1,0 +1,59 @@
+-- Matrix as Arr (Arr (Option Int)): nested random access, row/col operations.
+-- Uses arrFromList for construction, arrGet/arrSet for access.
+-- Note: arrGet on Arr (Option Int) returns Option (Option Int):
+--   outer None = out of bounds, inner None = empty slot.
+
+-- Extract a single element; -1 if missing or empty.
+getElemInner = &Arr (Option Int), Int -> Int: r, j ->
+  ci = arrGet r j
+  match ci
+    None       -> -1
+    Some inner -> match inner
+      None   -> -1
+      Some v -> v
+
+getElem = &Arr (Arr (Option Int)), Int, Int -> Int: m, i, j ->
+  ri = arrGet m i
+  match ri
+    None   -> -1
+    Some r -> getElemInner r j
+
+-- Sum a fixed-size row of 3 elements.
+rowSum3 = &Arr (Option Int) -> Int: r ->
+  a = getElemInner r 0
+  b = getElemInner r 1
+  c = getElemInner r 2
+  a + b + c
+
+-- Sum all rows in a 2-row matrix (nested matches to avoid tuple patterns).
+matrixSum2 = &Arr (Arr (Option Int)) -> Int: m ->
+  ri0 = arrGet m 0
+  match ri0
+    None   -> sumRowOpt (arrGet m 1)
+    Some r0 ->
+      ri1 = arrGet m 1
+      match ri1
+        None   -> rowSum3 r0
+        Some r1 -> rowSum3 r0 + rowSum3 r1
+
+sumRowOpt = &Option (Arr (Option Int)) -> Int: ri -> match ri
+  None   -> 0
+  Some r -> rowSum3 r
+
+-- Build a single row: [v0, v1, v2] as Arr (Option Int).
+buildRow = Int, Int, Int -> Arr (Option Int): a, b, c ->
+  r0 = arrSet (arrNew 3) 0 (Some a)
+  r1 = arrSet r0 1 (Some b)
+  arrSet r1 2 (Some c)
+
+-- Build a 2x3 matrix: [[1,2,3],[4,5,6]] via list-of-rows bridge.
+buildMatrix = Arr (Arr (Option Int)): ->
+  row0 = buildRow 1 2 3
+  row1 = buildRow 4 5 6
+  arrFromList [row0, row1]
+
+testReport = (Int, Int, Int): ->
+  m = buildMatrix
+  s = matrixSum2 m
+  e = getElem m 1 2
+  (e, s, arrLen m)

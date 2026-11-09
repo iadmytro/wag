@@ -1,0 +1,13 @@
+-- Eq typeclass: parametric instance Eq (Vec T) from prelude.
+-- testReport returns 0 iff all comparisons are correct.
+
+testReport = Int: ->
+  a = vecEmpty
+  a1 = vecPush a 1
+  a2 = vecPush a1 2
+  b = vecEmpty
+  b1 = vecPush b 1
+  b2 = vecPush b1 2
+  r1 = (a2 == b2)
+  if r1 -> 0
+  _ -> 10

@@ -1,0 +1,10 @@
+-- Eq typeclass: parametric instance Eq (Option T) from prelude.
+-- testReport returns 0 iff all comparisons are correct.
+
+testReport = Int: ->
+  r1 = (Some 1 == Some 1)
+  r2 = (Some 1 == Some 2)
+  if r1 ->
+    if r2 -> 10
+      _   -> 0
+  _ -> 20

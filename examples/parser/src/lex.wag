@@ -1,0 +1,175 @@
+-- lex.wag — Lexer: source text to token stream.
+--
+-- Purpose: Convert a WAG source string into a flat List Tok, including
+-- Newline tokens (with indent levels) for the layout pass.
+--
+-- How it works:
+--   1. Source string is converted to codepoints (List Int).
+--   2. A single tail-recursive loop (lexH) walks the codepoint list:
+--        - Newline (10) → count indent of next line, emit Newline(indent)
+--        - Comment (-- to EOL) → skip, then handle newline
+--        - Alpha → readIdentH (greedy identifier)
+--        - Digit → readIntH (greedy integer)
+--        - Quote → readStringH (with \n \t \\ \" escapes)
+--        - Multi-char operators: ->, <-, ==, !=, <=, >=
+--        - Single-char operators: + - * / % ^ & | ( ) [ ] , : @
+--   3. Horizontal whitespace (space, tab) between tokens is skipped.
+--   4. Tokens are accumulated in reverse and reversed at the end.
+
+export
+  lex
+
+import
+  prelude
+    ..
+  token
+    ..
+
+-- Codepoint bridge helpers (D086: stringToCodepoints/codepointsToString use Vec Int).
+cpToCpList = &String -> List Int: s -> vecToList (stringToCodepoints s)
+cpListToCp = List Int -> String: l -> codepointsToString (vecFromList l)
+
+-- ─── Whitespace & comment helpers ───────────────────────────────────────────
+
+-- Skip comment (-- to end of line). Returns rest after the newline.
+skipCommentH = List Int -> List Int: xs -> match xs.popFirst
+  (None, rest)   -> rest
+  (Some c, rest) -> if
+    c == 10 -> rest
+    _       -> skipCommentH rest
+
+-- Count indent (spaces/tabs) at start of line. Returns (indent, rest).
+countIndent = List Int, Int -> (Int, List Int): xs, n -> match xs.popFirst
+  (None, rest)   -> (n, rest)
+  (Some c, rest) -> match c
+    32 -> countIndent rest (n + 1)
+    9  -> countIndent rest (n + 1)
+    _  -> (n, rest)
+
+-- ─── Token readers ──────────────────────────────────────────────────────────
+
+-- Read identifier (after first alpha). Returns (name, rest).
+readIdentH = List Int, List Int -> (String, List Int): xs, acc -> match xs.popFirst
+  (None, rest)   -> (cpListToCp (reverse acc), rest)
+  (Some c, rest) -> if
+    isAlphaNum (copy c) -> readIdentH rest (acc.prepend c)
+    _                   -> (cpListToCp (reverse acc), (rest.prepend c))
+
+-- Read digits. Returns (digits, rest).
+readIntH = List Int, List Int -> (List Int, List Int): xs, acc -> match xs.popFirst
+  (None, rest)   -> (reverse acc, rest)
+  (Some c, rest) -> if
+    isDigit (copy c) -> readIntH rest (acc.prepend c)
+    _                 -> (reverse acc, (rest.prepend c))
+
+intFromDigitsH = List Int, Int -> Int: xs, acc -> match xs.popFirst
+  (None, _)   -> acc
+  (Some c, r) -> intFromDigitsH r (acc * 10 + (c - 48))
+
+intFromDigits = List Int -> Int: xs -> intFromDigitsH xs 0
+
+-- Read string body (after opening quote). Returns (str, rest).
+readStringH = List Int, List Int -> (String, List Int): xs, acc -> match xs.popFirst
+  (None, rest)   -> (cpListToCp (reverse acc), rest)
+  (Some c, rest) -> if
+    c == 34 -> (cpListToCp (reverse acc), rest)
+    c == 92 -> readEscapeH rest acc
+    _       -> readStringH rest (acc.prepend c)
+
+-- Handle an escape sequence (after backslash). Returns (str, rest).
+readEscapeH = List Int, List Int -> (String, List Int): xs, acc -> match xs.popFirst
+  (None, r2)         -> (cpListToCp (reverse acc), r2)
+  (Some ncr, r2)     -> readStringH r2 (acc.prepend (escapeChar ncr))
+
+escapeChar = Int -> Int: c -> if
+  c == 110 -> 10
+  c == 116 -> 9
+  c == 92  -> 92
+  c == 34  -> 34
+  _        -> c
+
+-- ─── Operator dispatch helpers ─────────────────────────────────────────────
+
+-- Dispatch on first char being `-` (45).
+lexDash = List Int, List Tok -> List Tok: rest, acc -> match rest.popFirst
+  (None, r2)   -> lexH r2 (acc.prepend (Op "-"))
+  (Some c2, r2) -> match c2
+    45 -> lexH (skipCommentH r2) acc
+    62 -> lexH r2 (acc.prepend Arrow)
+    _  -> lexH r2 (acc.prepend (Op "-"))
+
+-- Dispatch on first char being `=` (61).
+lexEquals = List Int, List Tok -> List Tok: rest, acc -> match rest.popFirst
+  (None, r2)   -> lexH r2 (acc.prepend (Op "="))
+  (Some c2, r2) -> match c2
+    61 -> lexH r2 (acc.prepend (Op "=="))
+    _  -> lexH r2 (acc.prepend (Op "="))
+
+-- Dispatch on first char being `!` (33).
+lexBang = List Int, List Tok -> List Tok: rest, acc -> match rest.popFirst
+  (None, r2)   -> lexH r2 (acc.prepend (Op "!"))
+  (Some c2, r2) -> match c2
+    61 -> lexH r2 (acc.prepend (Op "!="))
+    _  -> lexH r2 (acc.prepend (Op "!"))
+
+-- Dispatch on first char being `<` (60).
+lexLt = List Int, List Tok -> List Tok: rest, acc -> match rest.popFirst
+  (None, r2)   -> lexH r2 (acc.prepend (Op "<"))
+  (Some c2, r2) -> match c2
+    45 -> lexH r2 (acc.prepend LeftArrow)
+    61 -> lexH r2 (acc.prepend (Op "<="))
+    _  -> lexH r2 (acc.prepend (Op "<"))
+
+-- Dispatch on first char being `>` (62).
+lexGt = List Int, List Tok -> List Tok: rest, acc -> match rest.popFirst
+  (None, r2)   -> lexH r2 (acc.prepend (Op ">"))
+  (Some c2, r2) -> match c2
+    61 -> lexH r2 (acc.prepend (Op ">="))
+    _  -> lexH r2 (acc.prepend (Op ">"))
+
+-- ─── Main lexer loop ────────────────────────────────────────────────────────
+
+lexH = List Int, List Tok -> List Tok: xs, acc -> match xs.popFirst
+  (None, _)       -> reverse acc
+  (Some c, rest) -> if
+    c == 32  -> lexH rest acc
+    c == 9   -> lexH rest acc
+    c == 10  ->
+      p = countIndent rest 0
+      match p
+        (indent, rest2) -> lexH rest2 (acc.prepend (Newline indent))
+    c == 34  ->
+      p = readStringH rest listNew
+      match p
+        (s, rest2) -> lexH rest2 (acc.prepend (StrLit s))
+    c == 45  -> lexDash rest acc
+    c == 61  -> lexEquals rest acc
+    c == 33  -> lexBang rest acc
+    c == 60  -> lexLt rest acc
+    c == 62  -> lexGt rest acc
+    c == 40  -> lexH rest (acc.prepend LParen)
+    c == 41  -> lexH rest (acc.prepend RParen)
+    c == 91  -> lexH rest (acc.prepend LBracket)
+    c == 93  -> lexH rest (acc.prepend RBracket)
+    c == 44  -> lexH rest (acc.prepend Comma)
+    c == 58  -> lexH rest (acc.prepend Colon)
+    c == 64  -> lexH rest (acc.prepend At)
+    c == 43  -> lexH rest (acc.prepend (Op "+"))
+    c == 42  -> lexH rest (acc.prepend (Op "*"))
+    c == 47  -> lexH rest (acc.prepend (Op "/"))
+    c == 37  -> lexH rest (acc.prepend (Op "%"))
+    c == 94  -> lexH rest (acc.prepend (Op "^"))
+    c == 38  -> lexH rest (acc.prepend (Op "&"))
+    c == 124 -> lexH rest (acc.prepend (Op "|"))
+    isAlpha (copy c) ->
+      p = readIdentH rest (listNew.append c)
+      match p
+        (name, rest2) -> lexH rest2 (acc.prepend (Ident name))
+    isDigit (copy c) ->
+      p = readIntH rest (listNew.append c)
+      match p
+        (digits, rest2) -> lexH rest2 (acc.prepend (IntLit (intFromDigits digits)))
+    _ -> lexH rest (acc.prepend (Op (cpListToCp [c])))
+
+-- Entry point.
+lex = String -> List Tok: src -> lexH (cpToCpList src) listNew

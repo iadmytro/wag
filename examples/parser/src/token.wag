@@ -1,0 +1,73 @@
+-- token.wag — Token definitions for the WAG-in-WAG parser.
+--
+-- Purpose: Define the token vocabulary shared by lexer, layout, and parser.
+--
+-- How it works:
+--   Tok is a data type with one constructor per token kind.
+--   - Lexical tokens: Ident, IntLit, StrLit, Op, LParen, RParen, LBracket,
+--     RBracket, Comma, Colon, Arrow, LeftArrow, At, EOF.
+--   - Layout tokens (inserted by layout.wag, NOT by the lexer):
+--     Newline (carries indent level), Indent, Dedent.
+--   The layout pass converts Newline tokens into Indent/Dedent pairs,
+--   making the parser layout-insensitive (it sees explicit block markers).
+
+export
+  ..
+
+import
+  prelude
+    ..
+
+Tok = Ident String | IntLit Int | StrLit String | Op String
+    | LParen | RParen | LBracket | RBracket | Comma | Colon | Arrow
+    | LeftArrow | At | EOF
+    | Newline Int | Indent | Dedent
+
+-- ─── D075 typeclass (§6.10): render a token to a readable source string ──────
+-- Demonstrates class/instance syntax on the parser's own token type. The
+-- `Render C` scheme is `(C) -> String`; the single `Tok` instance specializes it.
+
+Render C =
+  render : C -> String
+
+Render Tok =
+  render t = match t
+    Ident s   -> "Ident:" + s
+    IntLit n  -> "IntLit:" + show n
+    StrLit s  -> "StrLit:" + s
+    Op s      -> "Op:" + s
+    LParen    -> "("
+    RParen    -> ")"
+    LBracket  -> "["
+    RBracket  -> "]"
+    Comma     -> ","
+    Colon     -> ":"
+    Arrow     -> "->"
+    LeftArrow -> "<-"
+    At        -> "@"
+    EOF       -> "EOF"
+    Newline i -> "Newline:" + show i
+    Indent    -> "Indent"
+    Dedent    -> "Dedent"
+
+-- ─── Eq (§3.12): structural equality over Tok ────────────────────────────────
+-- Constructor-by-constructor; String fields use native `==`.
+
+Eq Tok =
+  (==) a b = match (a, b)
+    (LParen, LParen) -> True
+    (RParen, RParen) -> True
+    (LBracket, LBracket) -> True
+    (RBracket, RBracket) -> True
+    (Comma, Comma) -> True
+    (Colon, Colon) -> True
+    (Arrow, Arrow) -> True
+    (LeftArrow, LeftArrow) -> True
+    (At, At) -> True
+    (EOF, EOF) -> True
+    (Indent, Indent) -> True
+    (Dedent, Dedent) -> True
+    (Ident x, Ident y) -> x == y
+    (StrLit x, StrLit y) -> x == y
+    (Op x, Op y) -> x == y
+    _ -> False

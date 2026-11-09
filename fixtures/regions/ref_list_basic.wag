@@ -1,0 +1,32 @@
+import
+  prelude
+    ..
+
+-- D081: ref list basic — actor holds a List Int, replies with its length.
+-- Holder shape: (List Int, ListMsg) -> List Int. Main: (Int, MainMsg) -> Int.
+
+ListMsg = Get (Actor MainMsg)
+
+@listHolder = List Int, ListMsg -> List Int: state, msg -> match msg
+  Get replyTo ->
+    n = length (copy state)
+    replyTo@ (ListLen n)
+    state
+
+MainMsg = Start (List String) | End Int | ListLen Int
+
+@main = @std: Int, MainMsg -> Int: st, msg -> match msg
+  Start _ ->
+    h@ = @listHolder [1, 2, 3]
+    h@ (Get self)
+    s@ = @std
+    s@ (Write "len")
+    self@ (End 0)
+    0
+  End code -> code
+  Line _ -> st
+  EndOfInput -> st
+  ListLen n ->
+    s@ = @std
+    s@ (Write (show n))
+    st

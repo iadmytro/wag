@@ -1,0 +1,811 @@
+export
+  ..
+
+-- Prelude: Standard Library (v2 — item-8 cutover)
+--
+-- Built-in module, imported explicitly (`import prelude ..`, D053).
+-- A local definition clashing with an imported prelude name is a compile
+-- error — use an import alias or rename the local.
+--
+-- `List T` is an ordinary region-based datatype declared here (the built-in
+-- Cons/Empty list is gone): a handle over a per-actor region of linked cells,
+-- with O(1) tail `append` / head `prepend` and a cursor model for traversal
+-- (D056/D057/D062). `[...]` literals build region lists directly.
+--
+-- Polymorphic functions are generalized automatically (S1.5, §3.5 Option A):
+-- any top-level binding not in a mutual-recursion cycle gets its free type
+-- variables bound, so each call site can instantiate independently.
+
+-- ─── Built-in primitives (compiler-provided, no WAG body) ──────────────────
+-- copy: &T -> T
+--   Creates a new owned value from a borrow. The original borrow remains valid
+--   (read-only, still usable). For pointer-free types (Int, Bool, Unit, Char)
+--   this is a trivial value copy; for non-PF types it's a deep copy.
+--   copy is a non-consuming read — it does NOT release the borrow.
+
+-- ─── List: region-based handle list (D054/D056/D057/D062) ──────────────────
+-- LNode: a cell in the list. LEnd marks the tail.
+-- List:  handle holding stable refs to head, tail and start nodes.
+-- Cursor model (D062): `head` is the cursor position; `start` anchors the
+-- first node so `rewind` is O(1); borrowed traversal uses peek/step without
+-- consuming (D057 single-step convention).
+
+-- Parametric (D061): one cell/handle shape for every element type.
+LNode =
+  LNodeC val T next (Ref (LNode T))
+  | LEnd
+List = LH head (Ref (LNode T)) tail (Ref (LNode T)) start (Ref (LNode T)) len Int
+
+listNew = List T: -> LH LEnd LEnd LEnd 0
+
+-- ─── Option: nullable wrapper (D086: prelude-declared, was builtin) ─────────
+Option =
+  Some val T
+  | None
+
+-- Links never cross call boundaries (D056/D057): there are no top-level
+-- functions taking `Ref T`. Read head/len by field access on the handle —
+-- field paths auto-deref through Ref (`h.head`, `h.len`). Mutation happens
+-- in single-step methods on List, not in free functions.
+
+-- O(1) append (D056/D057): new cell into the receiver region; empty case
+-- re-points head+tail at it, non-empty splices after the old tail node;
+-- move-and-return re-emits the handle.
+List.append = T -> List T: v ->
+  node = LNodeC v LEnd
+  len <- len + 1
+  match tail
+    LEnd ->
+      head <- node
+      tail <- node
+      start <- node
+      self
+    _    ->
+      tail.next <- node
+      tail <- node
+      self
+
+-- O(1) prepend (D056/D057, D062): new cell at the logical front — before
+-- `start`, not before the cursor; its `next` embeds the existing start link
+-- directly. The cursor keeps its node identity (except on an empty list,
+-- where it takes the sole node). Empty case re-points head+tail too.
+List.prepend = T -> List T: v -> match start
+  LEnd ->
+    node = LNodeC v LEnd
+    head <- node
+    tail <- node
+    start <- node
+    len <- len + 1
+    self
+  _ -> match self
+    LH hd tl st l ->
+      node = LNodeC v st
+      start <- node
+      len <- l + 1
+      self
+
+-- Pop the front: (element, shortened list). O(1) — removes the node at
+-- `start` and re-points cursor+start at its successor (D062); tail is
+-- re-pointed only when the list becomes empty (the successor is LEnd then).
+List.popFirst = (Option T, List T): -> match start
+  LEnd ->
+    (None, self)
+  LNodeC v nxt ->
+    head <- nxt
+    start <- nxt
+    len <- len - 1
+    match nxt
+      LEnd       ->
+        tail <- LEnd
+        (Some v, self)
+      LNodeC _ _ -> (Some v, self)
+
+-- O(1) emptiness test via the head link.
+List.isEmpty = Bool: -> match head
+  LEnd -> True
+  _    -> False
+
+-- Read-only (non-consuming): value under the cursor, None on an empty list.
+List.peek = Option T: -> match head
+  LEnd     -> None
+  LNodeC v _ -> Some v
+
+-- Single-step borrowed advance (D057/D062): move the cursor one node toward
+-- the tail without removing anything; total — None when the list is empty or
+-- the cursor already sits on the last node.
+List.step = Option (List T): -> match head
+  LEnd     -> None
+  LNodeC _ nxt ->
+    match nxt
+      LEnd       -> None
+      LNodeC _ _ ->
+        head <- nxt
+        Some self
+
+-- Move the cursor back to the front. O(1) via the `start` anchor (D062);
+-- a no-op on an empty list.
+List.rewind = List T: ->
+  head <- start
+  self
+
+-- ─── Traversal (cursor model, D057) ────────────────────────────────────────
+-- Top-level tail-recursive loops over List built from single-step methods:
+-- `popFirst` advances + reads one element, `append` builds. Links never cross
+-- this boundary; the handle is threaded through tail calls.
+
+-- Left fold: consumes the list via `popFirst` steps; returns the accumulator.
+fold = (T, U -> U), U, List T -> U: f, init, h -> foldLoop f init h
+foldLoop = (T, U -> U), U, List T -> U: f, acc, h ->
+  r = h.popFirst
+  match r
+    (o, h2) -> match o
+      None   -> acc
+      Some v -> foldLoop (copy f) (f v acc) h2
+
+-- Map: pops the input one element at a time and appends each image to a fresh
+-- output list; both handles are threaded through the tail call.
+map = (T -> U), List T -> List U: f, h ->
+  out0 = listNew
+  mapLoop f h out0
+mapLoop = (T -> U), List T, List U -> List U: f, in, out ->
+  r = in.popFirst
+  match r
+    (o, i2) -> match o
+      None   -> out
+      Some v -> mapLoop (copy f) i2 (out.append (f v))
+
+-- Filter: like map but appends only the elements passing the predicate.
+filter = (T -> Bool), List T -> List T: p, h ->
+  out0 = listNew
+  filterLoop p h out0
+filterLoop = (T -> Bool), List T, List T -> List T: p, in, out ->
+  r = in.popFirst
+  match r
+    (o, i2) -> match o
+      None   -> out
+      Some v -> if p (copy v) -> filterLoop p i2 (out.append v)
+                _      -> filterLoop p i2 out
+
+-- Append every element of `src` onto `dst` (consumes `src`).
+appendAll = List T, List T -> List T: src, dst -> appendAllLoop src dst
+appendAllLoop = List T, List T -> List T: src, dst ->
+  r = src.popFirst
+  match r
+    (o, s2) -> match o
+      None   -> dst
+      Some v -> appendAllLoop s2 (dst.append v)
+
+-- FlatMap: for each element, append every element of its image list.
+flatMap = (T -> List U), List T -> List U: f, h ->
+  out0 = listNew
+  flatMapLoop f h out0
+flatMapLoop = (T -> List U), List T, List U -> List U: f, in, out ->
+  r = in.popFirst
+  match r
+    (o, i2) -> match o
+      None   -> out
+      Some v -> flatMapLoop (copy f) i2 (appendAll (f v) out)
+
+-- Zip: pair elements pairwise, truncating to the shorter list (§6.7.5 —
+-- emitted by multi-generator comprehensions). Pops both inputs in lockstep.
+zip = List A, List B -> List (A, B): xs, ys -> zipLoop xs ys listNew
+zipLoop = List A, List B, List (A, B) -> List (A, B): xs, ys, out ->
+  r1 = xs.popFirst
+  match r1
+    (o1, x2) -> match o1
+      None   -> out
+      Some x ->
+        r2 = ys.popFirst
+        match r2
+          (o2, y2) -> match o2
+            None   -> out
+            Some y -> zipLoop x2 y2 (out.append (x, y))
+
+-- Length: O(1) via the handle's `len` field (`append`/`popFirst` keep it in sync).
+length = List T -> Int: h -> h.len
+
+-- Any: True if some element passes; early-exits on the first hit.
+any = (T -> Bool), List T -> Bool: p, h -> anyLoop p h
+anyLoop = (T -> Bool), List T -> Bool: p, h ->
+  r = h.popFirst
+  match r
+    (o, h2) -> match o
+      None   -> False
+      Some v -> if p v -> True
+                _      -> anyLoop p h2
+
+-- All: True if every element passes; early-exits on the first miss.
+all = (T -> Bool), List T -> Bool: p, h -> allLoop p h
+allLoop = (T -> Bool), List T -> Bool: p, h ->
+  r = h.popFirst
+  match r
+    (o, h2) -> match o
+      None   -> True
+      Some v -> if p v -> allLoop p h2
+                _      -> False
+
+-- Reverse: destructive rebuild — pop each element off the input and prepend it
+-- to a fresh list (O(n); O(1) prepend makes the accumulator-reverse idiom moot).
+reverse = List T -> List T: h ->
+  out0 = listNew
+  reverseLoop h out0
+reverseLoop = List T, List T -> List T: in, out ->
+  r = in.popFirst
+  match r
+    (o, i2) -> match o
+      None   -> out
+      Some v -> reverseLoop i2 (out.prepend v)
+
+-- Concat: flatten a list of lists (consumes the outer and every inner list).
+concat = List (List T) -> List T: xss ->
+  out0 = listNew
+  concatLoop xss out0
+concatLoop = List (List T), List T -> List T: xss, out ->
+  r = xss.popFirst
+  match r
+    (o, xs2) -> match o
+      None   -> out
+      Some xs -> concatLoop xs2 (appendAll xs out)
+
+-- ─── Option helpers ─────────────────────────────────────────────────────────
+
+optionDefault = T, Option T -> T: d, o -> match o
+  None   -> d
+  Some v -> v
+
+optionMap = (T -> U), Option T -> Option U: f, o -> match o
+  None   -> None
+  Some v -> Some (f v)
+
+optionFilter = (T -> Bool), Option T -> Option T: p, o -> match o
+  None   -> None
+  Some v -> if p (copy v) -> Some v
+    _      -> None
+
+optionBind = (T -> Option U), Option T -> Option U: f, o -> match o
+  None   -> None
+  Some v -> f v
+
+-- ─── Consuming list ops ─────────────────────────────────────────────────────
+
+sum = List Int -> Int: h -> sumLoop h 0
+sumLoop = List Int, Int -> Int: h, acc -> match h.popFirst
+  (None, _)   -> acc
+  (Some v, r) -> sumLoop r (acc + v)
+
+min = List Int -> Option Int: h -> minLoop h None
+minLoop = List Int, Option Int -> Option Int: h, m -> match h.popFirst
+  (None, _)   -> m
+  (Some v, r) -> minLoop r (minStep m v)
+minStep = Option Int, Int -> Option Int: m, v -> match m
+  None     -> Some v
+  Some mv  -> if v < mv -> Some v
+    _      -> Some mv
+
+max = List Int -> Option Int: h -> maxLoop h None
+maxLoop = List Int, Option Int -> Option Int: h, m -> match h.popFirst
+  (None, _)   -> m
+  (Some v, r) -> maxLoop r (maxStep m v)
+maxStep = Option Int, Int -> Option Int: m, v -> match m
+  None     -> Some v
+  Some mv  -> if v > mv -> Some v
+    _      -> Some mv
+
+drop = Int, List T -> List T: n, h -> if n <= 0 -> h
+  _          -> dropLoop n h
+dropLoop = Int, List T -> List T: n, h -> match h.popFirst
+  (None, _)   -> listNew
+  (Some _, r) -> if n == 1 -> r
+    _       -> dropLoop (n - 1) r
+
+take = Int, List T -> List T: n, h -> takeLoop n h listNew
+takeLoop = Int, List T, List T -> List T: n, in, out -> match in.popFirst
+  (None, _)   -> out
+  (Some v, r) -> if n <= 0 -> out
+    _       -> takeLoop (n - 1) r (out.append v)
+
+partition = (T -> Bool), List T -> (List T, List T): p, h -> partitionLoop p h listNew listNew
+partitionLoop = (T -> Bool), List T, List T, List T -> (List T, List T): p, in, yes, no -> match in.popFirst
+  (None, _)   -> (yes, no)
+  (Some v, r) -> if p (copy v) -> partitionLoop p r (yes.append v) no
+    _       -> partitionLoop p r yes (no.append v)
+
+listCount = (T -> Bool), List T -> Int: p, h -> listCountLoop p h 0
+listCountLoop = (T -> Bool), List T, Int -> Int: p, h, n -> match h.popFirst
+  (None, _)   -> n
+  (Some v, r) -> if p v -> listCountLoop p r (n + 1)
+    _       -> listCountLoop p r n
+
+-- ─── Borrowed traversal (peek/step cursor walk, D057/D062) ────────────────
+-- Non-consuming: the source handle is re-emitted with its cursor on the last
+-- node (or unchanged when empty), so it can be rewound and walked again.
+
+-- Borrowed left fold: peek/step walk; leaves the cursor on the last node.
+foldB = (T, U -> U), U, List T -> U: f, init, h -> foldBLoop f init h
+foldBLoop = (T, U -> U), U, List T -> U: f, acc, h ->
+  p = h.peek
+  match p
+    None   -> acc
+    Some v -> match h.step
+      None      -> f v acc          -- last element; cursor stays put
+      Some h2   -> foldBLoop f (f v acc) h2
+
+-- Borrowed map: rewinds on entry, so the same source can be mapped repeatedly.
+mapB = (T -> U), List T -> List U: f, h ->
+  out0 = listNew
+  mapBLoop f (h.rewind) out0
+mapBLoop = (T -> U), List T, List U -> List U: f, in, out -> match in.peek
+  None   -> out
+  Some v -> match in.step
+    None      -> out.append (f v)
+    Some i2   -> mapBLoop f i2 (out.append (f v))
+
+-- Nth element (0-indexed) via peek/step walk; None if out of range.
+nth = Int, List T -> Option T: n, h -> nthLoop n (h.rewind)
+nthLoop = Int, List T -> Option T: n, h -> match h.peek
+  None   -> None
+  Some v -> if n == 0 -> Some v
+    _      -> nthStep (n - 1) h
+nthStep = Int, List T -> Option T: n, h -> match h.step
+  None   -> None
+  Some h2 -> nthLoop n h2
+
+-- First element matching the predicate; None if none match.
+find = (T -> Bool), List T -> Option T: p, h -> findLoop p (h.rewind)
+findLoop = (T -> Bool), List T -> Option T: p, h -> match h.peek
+  None   -> None
+  Some v -> if p (copy v) -> Some v
+    _      -> findStep p h
+findStep = (T -> Bool), List T -> Option T: p, h -> match h.step
+  None   -> None
+  Some h2 -> findLoop p h2
+
+-- Last element via peek/step walk; None on empty.
+last = List T -> Option T: h -> lastLoop (h.rewind)
+lastLoop = List T -> Option T: h -> match h.peek
+  None   -> None
+  Some v -> match h.step
+    None   -> Some v
+    Some h2 -> lastLoop h2
+
+-- ─── Generators ─────────────────────────────────────────────────────────────
+
+-- range lo hi: List Int (inclusive; empty if lo > hi).
+range = Int, Int -> List Int: lo, hi -> rangeLoop lo hi listNew
+rangeLoop = Int, Int, List Int -> List Int: lo, hi, acc ->
+  if lo > hi -> acc
+    _        -> rangeLoop lo (hi - 1) (acc.append hi)
+
+-- ─── Arr T: builtin array type ──────────────────────────────────────────────
+-- `Arr` is a compiler builtin type; its safe API is the raw builtins
+-- (arrNew, arrLen, arrGet, arrSet, arrFromList, arrToList).
+
+-- ─── Vec T: growable element buffer (D086: prelude-declared, was builtin) ────
+-- Rust-`Vec` model: a heap buffer (`Arr (Option T)`) over-allocated to `cap`,
+-- with the first `len` slots filled (`Some`) and the slack up to `cap` empty
+-- (`None`). `push` writes in the slack (O(1)); when full it 2×-reallocs
+-- (O(n), rare) → amortized O(1), exactly like Rust's `Vec`.
+Vec = VBuf buf (Arr (Option T)) len Int cap Int
+
+-- Empty vector: zero-length, zero-capacity buffer.
+vecEmpty = Vec T: -> VBuf (arrNew 0) 0 0
+
+-- Logical length (non-consuming).
+vecLen = &Vec T -> Int: v -> v.len
+
+-- Bounds-checked element access: `None` out of range, else the slot's value.
+vecGet = &Vec T, Int -> Option T: v, i ->
+  r = arrGet v.buf i
+  match r
+    None -> None
+    Some s -> s
+
+-- Append: write in the slack if there is room (O(1)); else 2×-realloc.
+vecPush = Vec T, T -> Vec T: v, x ->
+  match v
+    VBuf buf len cap ->
+      hasRoom = len < cap
+      if hasRoom -> VBuf (arrSet buf (copy len) (Some x)) (len + 1) cap
+        _         -> vecReallocBuf buf len cap x
+
+-- Realloc to 2× capacity (min 4), copy the filled slots, then append `x`.
+vecReallocBuf = Arr (Option T), Int, Int, T -> Vec T: buf, len, cap, x ->
+  newCap = if cap == 0 -> 4
+            _          -> cap * 2
+  newBuf = arrNew (copy newCap)
+  copied = vecCopyLoop buf newBuf 0 (copy len)
+  VBuf (arrSet copied (copy len) (Some x)) (len + 1) newCap
+
+-- Tail-recursive copy of the first `n` slots from `src` into `dst`.
+vecCopyLoop = Arr (Option T), Arr (Option T), Int, Int -> Arr (Option T): src, dst, i, n ->
+  if i < n ->
+    slot = arrGet src (copy i)
+    match slot
+      None   -> vecCopyLoop src dst (i + 1) n
+      Some s -> vecCopyLoop src (arrSet dst (copy i) s) (i + 1) n
+  _ -> dst
+
+-- Convert to a `List` (left-to-right order).
+vecToList = Vec T -> List T: v ->
+  match v
+    VBuf buf len cap -> vecToListLoop buf 0 len listNew
+
+vecToListLoop = Arr (Option T), Int, Int, List T -> List T: buf, i, n, out ->
+  if i < n ->
+    slot = arrGet buf (copy i)
+    match slot
+      None   -> vecToListLoop buf (i + 1) n out
+      Some s ->
+        match s
+          None   -> vecToListLoop buf (i + 1) n out
+          Some x -> vecToListLoop buf (i + 1) n (out.append x)
+  _ -> out
+
+-- Convert from a `List`: pre-allocate to the exact length, fill slot by slot.
+vecFromList = List T -> Vec T: l ->
+  n = l.len
+  vecFromListLoop l (VBuf (arrNew (copy n)) 0 n) 0
+
+vecFromListLoop = List T, Vec T, Int -> Vec T: l, v, i ->
+  match l.popFirst
+    (None, _) -> v
+    (Some x, l2) ->
+      match v
+        VBuf buf len cap -> vecFromListLoop l2 (VBuf (arrSet buf (copy i) (Some x)) (i + 1) cap) (i + 1)
+
+-- ─── Add typeclass (D075, §3.12) ────────────────────────────────────────────
+-- `(+)` is resolved through class instances; native Int/Bool arithmetic stays
+-- hardcoded in the typechecker (no instance needed).
+
+Add C =
+  (+) : C, C -> C
+
+Add String =
+  (+) a b = stringConcat a b
+
+Add (Vec Int) =
+  (+) a b = vecFromList (appendAll (vecToList b) (vecToList a))
+
+-- ─── Eq typeclass (§3.12) ───────────────────────────────────────────────────
+-- `(==)` dispatches through class instances for user/parametric types.
+-- Native Int/Bool/Unit/String/Char equality stays hardcoded in the typechecker.
+
+Eq T =
+  (==) : T, T -> Bool
+
+Eq (Option T) =
+  (==) = Eq T => Option T, Option T -> Bool: a b ->
+    match a
+      None ->
+        match b
+          None -> True
+          _ -> False
+      Some x ->
+        match b
+          None -> False
+          Some y -> x == y
+
+vecEqLists = Eq T => List T, List T -> Bool: la, lb ->
+  match la.popFirst
+    (None, _) ->
+      match lb.popFirst
+        (None, _) -> True
+        _ -> False
+    (Some x, ra) ->
+      match lb.popFirst
+        (None, _) -> False
+        (Some y, rb) ->
+          if x == y -> vecEqLists ra rb
+            _ -> False
+
+Eq (Vec T) =
+  (==) = Eq T => Vec T, Vec T -> Bool: a b ->
+    vecEqLists (vecToList a) (vecToList b)
+
+-- ─── Monad (§6.5): do-notation dispatch ─────────────────────────────────────
+-- `do { x <- e; return v }` desugars to `bind e (\x -> pure v)`.
+-- The `return` keyword in do-blocks maps to the class's `pure` method.
+
+Monad C =
+  bind : C A, (A -> C B) -> C B
+  pure : A -> C A
+
+Monad Option =
+  bind m k = optionBind k m
+  pure a = Some a
+
+-- ─── String ─────────────────────────────────────────────────────────────────
+-- String is a nominal builtin type (VM representation: byte vector).
+-- Byte-level access via `stringToBytes` / `bytesToString` (Vec Int bridges, D086).
+-- The helpers below convert to/from `List Int` for the list-based algorithms.
+
+-- Byte list from a string (Vec Int bridge → List Int).
+strToByteList = &String -> List Int: s -> vecToList (stringToBytes s)
+-- String from a byte list (List Int → Vec Int bridge).
+byteListToStr = List Int -> String: l -> bytesToString (vecFromList l)
+
+-- String length in bytes.
+stringLen = &String -> Int: s -> vecLen (stringToBytes s)
+
+-- Concatenate two strings: copy a's bytes, then append b's bytes (O(n)).
+stringConcat = String, String -> String: a, b -> byteListToStr (strConcatLoop (strToByteList a) (strToByteList b) listNew)
+strConcatLoop = List Int, List Int, List Int -> List Int: la, lb, acc -> match la.popFirst
+  (None, _)   -> strConcatTail lb acc
+  (Some c, r) -> strConcatLoop r lb (acc.append c)
+strConcatTail = List Int, List Int -> List Int: lb, acc -> match lb.popFirst
+  (None, _)   -> acc
+  (Some c, r) -> strConcatTail r (acc.append c)
+
+-- Split on a separator codepoint. Rust-style semantics: always ≥ 1 piece;
+-- empty input yields [""]; a trailing separator yields a final "".
+stringSplit = Int, String -> List String: sep, s ->
+  cps = strToByteList s
+  splitLoop sep cps listNew listNew
+splitLoop = Int, List Int, List String, List Int -> List String: sep, cps, out, piece ->
+  r = cps.popFirst
+  match r
+    (o, c2) -> match o
+      None   -> out.append (byteListToStr piece)
+      Some cp -> if cp == sep -> splitLoop sep c2 (out.append (byteListToStr piece)) listNew
+        _     -> splitLoop sep c2 out (piece.append cp)
+
+-- Join with a separator codepoint.
+stringJoin = Int, List String -> String: sep, h -> stringJoinLoop sep h "" False
+stringJoinLoop = Int, List String, String, Bool -> String: sep, h, acc, started ->
+  sepc = copy sep
+  r = h.popFirst
+  match r
+    (o, h2) -> match o
+      None   -> acc
+      Some s -> if started -> stringJoinLoop sep h2 (stringConcat (stringConcat acc (byteStr sepc)) s) True
+        _     -> stringJoinLoop sep h2 s True
+
+-- Single-byte string helper.
+byteStr = Int -> String: c -> byteListToStr (listNew.append c)
+
+-- Case conversion (ASCII).
+toUpper = &String -> String: s -> byteListToStr (mapCpH (strToByteList s) listNew toUpperCp)
+toLower = &String -> String: s -> byteListToStr (mapCpH (strToByteList s) listNew toLowerCp)
+
+-- Generic codepoint map: fold over cps, apply f to each, accumulate.
+mapCpH = List Int, List Int, (Int -> Int) -> List Int: cps, acc, f -> match cps.popFirst
+  (None, _)   -> reverse acc
+  (Some c, r) -> mapCpH r (acc.prepend (f c)) f
+
+toUpperCp = Int -> Int: cp -> if (cp >= 97) & (cp <= 122) -> cp - 32
+  _ -> cp
+toLowerCp = Int -> Int: cp -> if (cp >= 65) & (cp <= 90) -> cp + 32
+  _ -> cp
+
+-- Trim leading/trailing whitespace (space, tab).
+trim = &String -> String: s -> byteListToStr (trimEndRevH (reverse (trimStartH (strToByteList s))))
+trimStartH = List Int -> List Int: xs -> match xs.popFirst
+  (None, _)   -> listNew
+  (Some c, r) -> if isWhitespace (copy c) -> trimStartH r
+    _       -> r.prepend c
+trimEndRevH = List Int -> List Int: xs -> match xs.popFirst
+  (None, _)   -> listNew
+  (Some c, r) -> if isWhitespace (copy c) -> trimEndRevH r
+    _       -> r.prepend c
+
+-- Substring search: does `haystack` contain `needle` as a byte sequence?
+stringContains = &String, &String -> Bool: hay, needle ->
+  hCps = strToByteList hay
+  nCps = strToByteList needle
+  containsH hCps nCps
+
+containsH = List Int, List Int -> Bool: hay, needle -> match needle.popFirst
+  (None, _)   -> True
+  (Some nc, nr) -> containsStepH hay nc nr
+
+-- One step of substring search: compare hay's head to nc; on match advance
+-- into nr, on mismatch restart the needle from nc.
+containsStepH = List Int, Int, List Int -> Bool: hay, nc, nr -> match hay.popFirst
+  (None, _)   -> False
+  (Some hc, hr) -> if hc == nc -> containsH hr nr
+    _        -> containsStepH hr nc nr
+
+-- Replace all occurrences of byte `src` with `to`.
+stringReplace = Int, Int, &String -> String: src, to, s ->
+  byteListToStr (replaceCpH (strToByteList s) listNew src to)
+replaceCpH = List Int, List Int, Int, Int -> List Int: cps, acc, src, to -> match cps.popFirst
+  (None, _)   -> reverse acc
+  (Some c, r) -> if c == src -> replaceCpH r (acc.prepend (copy to)) src to
+    _       -> replaceCpH r (acc.prepend c) src to
+
+-- Repeat a string n times.
+stringRepeat = &String, Int -> String: s, n -> stringRepeatH (copy s) n ""
+stringRepeatH = String, Int, String -> String: s, n, acc -> if n <= 0 -> acc
+  _ -> stringRepeatH (copy s) (n - 1) (stringConcat acc s)
+
+-- Reverse a string's byte order.
+stringReverse = &String -> String: s -> byteListToStr (reverse (strToByteList s))
+
+-- ─── Char-level case fns (single codepoint) ─────────────────────────────────
+
+isUpper = Int -> Bool: cp -> (cp >= 65) & (cp <= 90)
+
+isLower = Int -> Bool: cp -> (cp >= 97) & (cp <= 122)
+
+toUpperChar = Int -> Int: cp -> if isUpper (copy cp) -> cp
+  _ -> toUpperCp cp
+
+toLowerChar = Int -> Int: cp -> if isLower (copy cp) -> cp
+  _ -> toLowerCp cp
+
+-- ─── Char classification (codepoint Ints, for parser support) ──────────────
+
+isDigit = Int -> Bool: cp -> (cp >= 48) & (cp <= 57)
+
+isAlpha = Int -> Bool: cp -> ((cp >= 65) & (cp <= 90)) | ((cp >= 97) & (cp <= 122))
+
+isAlphaNum = Int -> Bool: cp -> (isAlpha (copy cp)) | (isDigit (copy cp)) | (cp == 95)
+
+isWhitespace = Int -> Bool: cp -> (cp == 9) | (cp == 10) | (cp == 13) | (cp == 32)
+
+-- ─── Numeric ─────────────────────────────────────────────────────────────────
+
+abs = Int -> Int: x -> if
+  x < 0 -> (0 - x)
+  _ -> x
+
+showDigit = Int -> String: d -> if
+  d == 0 -> "0"
+  d == 1 -> "1"
+  d == 2 -> "2"
+  d == 3 -> "3"
+  d == 4 -> "4"
+  d == 5 -> "5"
+  d == 6 -> "6"
+  d == 7 -> "7"
+  d == 8 -> "8"
+  _ -> "9"
+
+showH = Int, String -> String: n, acc -> if
+  n == 0 -> acc
+  _ -> showH (n / 10) (stringConcat (showDigit (n % 10)) acc)
+
+show = Int -> String: n -> if
+  n == 0 -> "0"
+  n < 0 -> stringConcat "-" (showH (0 - n) "")
+  _ -> showH n ""
+
+-- Parse a decimal integer from a string. Returns Option Int: None on empty
+-- or non-numeric input, Some n on success. Handles optional leading '-'.
+intParse = &String -> Option Int: s -> intParseH (strToByteList s) False 0
+intParseH = List Int, Bool, Int -> Option Int: cps, neg, acc -> match cps.popFirst
+  (None, _)   -> if acc == 0 -> intEmpty neg
+    _         -> intFinish neg acc
+  (Some c, r) -> if isDigit (copy c) -> intParseH r neg (acc * 10 + (c - 48))
+    (c == 45) & (acc == 0) -> intParseH r True 0
+    _                  -> None
+
+intEmpty = Bool -> Option Int: neg -> if neg -> Some 0
+  _ -> None
+
+intFinish = Bool, Int -> Option Int: neg, acc -> if neg -> Some (0 - acc)
+  _ -> Some acc
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- I/O surface (D043) — two-layer I/O.
+--
+-- `@std` is a WAG actor that wraps the native `@SysStd`. User code keeps the
+-- spec §5.5.7 surface: bind the handle then send — `s = @std`, `s@
+-- (RequestLine replyTo)` / `s@ (Write chars)` — and matches `Line` /
+-- `EndOfInput` arms (outbox rule).
+-- `@SysStd` speaks the raw protocol (ReadLine/WriteLine in; Chunk/StdEnd out)
+-- and is only addressed by this prelude actor.
+--
+-- `@file` (D082) wraps the native `@SysFile`: `f = @file`, `f@
+-- (ReadFile path replyTo)` — and matches `FileContent` / `FileError` arms.
+-- `@SysFile` speaks the raw protocol (ReadFileRaw in; FileData/FileErr out)
+-- and is only addressed by this prelude actor.
+--
+-- Request ctors (RequestLine/Write/ReadFile) remain checker built-ins because
+-- their reply target is a flexible `Actor a` (v1 has no polymorphic type
+-- syntax). Reply ctors are prelude-declared below (single source; D035
+-- injection retired).
+-- ─────────────────────────────────────────────────────────────────────────────
+
+-- Reply ctors delivered to user actors by @std (spec §5.5.7 surface).
+StdReply = Line String | EndOfInput
+
+-- Reply ctors delivered to user actors by @file (spec §5.5.7 surface, D082).
+FileReply = FileContent String | FileError String
+
+-- Reply ctors delivered to user actors by @net (spec §5.5.7 token
+-- protocol). The token is an opaque Int (a connection handle).
+NetReply = Connected Int | Data (List Int) | Closed Int
+
+-- Raw request ctors addressed by @std (delivered to native @SysStd).
+SysStdMsg = ReadLine (Actor StdMsg) | WriteLine String
+
+-- Raw reply ctors delivered by @SysStd to @std.
+SysStdReply = Chunk String | StdEnd
+
+-- Raw request ctors addressed by @file (delivered to native @SysFile, D082).
+-- The requester field is the @file actor's handle (`Actor FileMsg`), mirroring
+-- `ReadLine (Actor StdMsg)` on `SysStdMsg`.
+SysFileMsg = ReadFileRaw String (Actor FileMsg)
+
+-- Raw reply ctors delivered by @SysFile to @file.
+SysFileReply = FileData String | FileErr String
+
+@std = @SysStd: Option (Actor StdReply), StdMsg -> Option (Actor StdReply): st, msg ->
+  sysStd@ = @SysStd
+  match msg
+    RequestLine replyTo ->
+      sysStd@ (ReadLine self)
+      (Some replyTo)
+    Write chars ->
+      sysStd@ (WriteLine chars)
+      st
+    Chunk data -> match st
+      Some t ->
+        t@ (Line data)
+        (Some t)
+      None -> None
+    StdEnd -> match st
+      Some t ->
+        t@ EndOfInput
+        (Some t)
+      None -> None
+
+-- `@file` proxies the native `@SysFile` into the user surface (D082): bind
+-- then send — `f = @file`, `f@ (ReadFile path replyTo)`; matches
+-- `FileContent`/`FileError` arms (outbox rule). Single-slot: the most recent
+-- requester receives the raw reply (same semantics as @std's pending slot).
+@file = @SysFile: Option (Actor FileReply), FileMsg -> Option (Actor FileReply): st, msg ->
+  sysFile@ = @SysFile
+  match msg
+    ReadFile path replyTo ->
+      sysFile@ (ReadFileRaw path self)
+      (Some replyTo)
+    FileData data -> match st
+      Some t ->
+        t@ (FileContent data)
+        (Some t)
+      None -> None
+    FileErr msg -> match st
+      Some t ->
+        t@ (FileError msg)
+        (Some t)
+      None -> None
+
+-- `@net` proxies the native `@SysNet` (raw token protocol) into the user
+-- surface: bind then send — `n = @net`, `n@ (RequestConnection port replyTo)`
+-- / `n@ RequestData ...` / `n@ Send ...` / `n@ Close ...`; matches
+-- `Connected`/`Data`/`Closed` arms (outbox rule).
+-- v1 single-slot: the most recent requester receives raw replies.
+-- Request ctors are checker built-ins (flexible `Actor a` reply target);
+-- raw protocol ctors are built-ins addressed at `@SysNet`.
+@net = @SysNet: Option (Actor NetReply), NetMsg -> Option (Actor NetReply): st, msg ->
+  sysNet@ = @SysNet
+  match msg
+    RequestConnection port replyTo ->
+      sysNet@ (ConnRequest port self)
+      (Some replyTo)
+    RequestData token replyTo ->
+      sysNet@ (DataRequest token self)
+      (Some replyTo)
+    Send token bytes ->
+      sysNet@ (NetSend token bytes)
+      st
+    Close token ->
+      sysNet@ (NetClose token)
+      st
+    ConnToken token -> match st
+      Some t ->
+        t@ (Connected token)
+        (Some t)
+      None -> None
+    NetData bytes -> match st
+      Some t ->
+        t@ (Data bytes)
+        (Some t)
+      None -> None
+    ConnGone token -> match st
+      Some t ->
+        t@ (Closed token)
+        (Some t)
+      None -> None

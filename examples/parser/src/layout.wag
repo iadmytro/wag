@@ -1,0 +1,90 @@
+-- layout.wag — Layout pre-pass: Newline tokens → Indent/Dedent.
+--
+-- Purpose: Convert a token stream with Newline(indent) tokens into one with
+-- explicit Indent/Dedent block markers. After this pass, the parser is
+-- layout-insensitive — it sees explicit block delimiters, not indentation.
+--
+-- How it works:
+--   State: an indent stack (List Int). The top of the stack is the current
+--   indentation level.
+--
+--   For each token in the input:
+--     - Newline(n):
+--       * If n > top of stack → emit Indent, push n onto stack.
+--       * If n < top of stack → emit Dedent (one or more), pop levels until
+--         top <= n. If n matches a previous level, stop.
+--       * If n == top of stack → do nothing (same level, statement boundary).
+--     - Any other token → emit it unchanged.
+--
+--   At end of input: emit Dedent for each remaining level on the stack.
+--
+--   This is a single tail-recursive loop over the token list, threading the
+--   indent stack as an accumulator. No recursion over tokens.
+
+export
+  layout
+
+import
+  prelude
+    ..
+  token
+    ..
+
+-- Layout state: current indent stack. Threaded as a parameter (tail-recursive).
+layoutH = List Tok, List Int, List Tok -> List Tok: toks, stack, acc -> match toks.popFirst
+  (None, _) ->
+    -- Emit trailing Dedents for remaining stack levels.
+    d = trailingDedents stack
+    reverse (concat [acc, d])
+  (Some t, rest) -> handleTok t rest stack acc
+
+-- Handle a single token: Newline triggers indent logic, others pass through.
+handleTok = Tok, List Tok, List Int, List Tok -> List Tok: t, rest, stack, acc -> match (copy t)
+  Newline n ->
+    r = processNewline n stack acc
+    match r
+      (newStack, newAcc) -> layoutH rest newStack newAcc
+  _ -> layoutH rest stack (acc.prepend t)
+
+-- Process a Newline token: compare indent to stack top.
+-- Returns (newStack, newAcc).
+processNewline = Int, List Int, List Tok -> (List Int, List Tok): n, stack, acc -> match stack.popFirst
+  (None, _) ->
+    -- No previous level: just push the new level (first line).
+    (listNew.append n, acc)
+  (Some top, rest) ->
+    if n > (copy top) ->
+      ((rest.prepend top).prepend n, acc.prepend Indent)
+    _ ->
+      if n < (copy top) ->
+        r = popDedents n rest acc
+        match r
+          (newStack, newAcc) -> (newStack, newAcc)
+      _ ->
+        (rest.prepend top, acc)
+
+-- Pop levels and emit Dedent tokens until we find a level <= n.
+-- Tail-recursive: the dedent for each popped level is threaded into `acc` on the
+-- recursive call, so the call is in tail position (§7 rule 1). The stop condition
+-- still emits one final Dedent, matching the original accumulation exactly.
+popDedents = Int, List Int, List Tok -> (List Int, List Tok): n, stack, acc -> match stack.popFirst
+  (None, _) -> (listNew, acc.prepend Dedent)
+  (Some top, rest) ->
+    if n < (copy top) ->
+      -- Still too deep: emit a Dedent for this level and keep popping.
+      popDedents n rest (acc.prepend Dedent)
+    _ ->
+      -- Found matching level (or went past it): push n back, emit one final Dedent.
+      ((rest.prepend top).prepend n, acc.prepend Dedent)
+
+-- Emit one Dedent per remaining stack level. Tail-recursive via an accumulator
+-- helper (§7 rule 1); every emitted token is identical, so the accumulation order
+-- is irrelevant and `trailingDedents` keeps its single-arg entry signature.
+trailer = List Int, List Tok -> List Tok: stack, acc -> match stack.popFirst
+  (None, _)   -> acc
+  (Some _, r) -> trailer r (acc.prepend Dedent)
+
+trailingDedents = List Int -> List Tok: stack -> trailer stack listNew
+
+-- Entry point: run layout pass on a token stream.
+layout = List Tok -> List Tok: toks -> layoutH toks listNew listNew

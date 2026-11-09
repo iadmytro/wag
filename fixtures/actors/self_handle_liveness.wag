@@ -1,0 +1,27 @@
+import
+  prelude
+    ..
+
+-- D081: self-handle liveness — actor sends to itself, stays alive.
+-- Pinger shape: (Int, PingMsg) -> Int. Main shape: (Int, MainMsg) -> Int.
+
+PingMsg = Ping
+
+@pinger = Int, PingMsg -> Int: state, msg -> match msg
+  Ping ->
+    self@ Ping
+    state
+
+MainMsg = Start (List String) | End Int
+
+@main = @std: Int, MainMsg -> Int: st, msg -> match msg
+  Start _ ->
+    p@ = @pinger 0
+    p@ Ping
+    s@ = @std
+    s@ (Write "pinged")
+    self@ (End 0)
+    0
+  End code -> code
+  Line _ -> st
+  EndOfInput -> st

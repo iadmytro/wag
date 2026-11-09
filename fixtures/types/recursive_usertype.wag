@@ -1,0 +1,13 @@
+-- Self-referential user type — rule 14 permits it (§7), classified non-pointer-free.
+-- A monomorphic recursive list of ints.
+RList = REmpty | RCons Int RList
+
+-- Tail-recursive sum (rule 1).
+rsumHelper = RList, Int -> Int: lst, acc -> match lst
+  REmpty -> acc
+  RCons h t -> rsumHelper t (acc + h)
+
+rsum = RList -> Int: lst -> rsumHelper lst 0
+
+-- Build a 2-element recursive list [n, 1] and sum it (n + 1).
+rsumSample = Int -> Int: n -> rsum (RCons n (RCons 1 REmpty))

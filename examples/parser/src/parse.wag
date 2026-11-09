@@ -1,0 +1,140 @@
+-- parse.wag — Full WAG expression + declaration parser.
+--
+-- Purpose: Parse a layout-aware token stream (Indent/Dedent) into a full
+-- AST: expressions, declarations, types, patterns, module header.
+--
+-- How it works:
+--   All functions are tail-recursive (rule 1). Nested structures use
+--   explicit stacks (lists as data) instead of call-stack recursion.
+--
+--   Expression parsing uses a single worklist driver `drive` (§6.2.1): an
+--   explicit instruction stack (`work`, a list of `Frame`) plus an operand
+--   stack (`vals`). Precedence climbing is encoded as frames so every sub-parse
+--   is scheduled ahead and executed in tail position — no cyclic non-tail edge.
+--
+--   Declarations are parsed by dispatching on the first token:
+--     - Ident + Colon → function declaration
+--     - At + Ident → actor declaration
+--     - Ident + type params → data type declaration
+--
+--   Module header: export/import blocks parsed before declarations.
+
+export
+  parseExpr
+
+import
+  prelude
+    ..
+  token
+    ..
+  ast
+    ..
+
+-- ─── Precedence helpers ─────────────────────────────────────────────────────
+
+-- Precedence level: higher = tighter binding.
+-- 1: |  2: &  3: == != < > <= >=  4: + -  5: * / %  6: ^
+-- Pure, non-recursive (if-chain): not on any call cycle, safe to call from drive.
+precOf = String -> Int: op -> match op
+  "|" -> 1
+  "&" -> 2
+  "==" -> 3
+  "!=" -> 3
+  "<" -> 3
+  ">" -> 3
+  "<=" -> 3
+  ">=" -> 3
+  "+" -> 4
+  "-" -> 4
+  "*" -> 5
+  "/" -> 5
+  "%" -> 5
+  "^" -> 6
+  _ -> 0
+
+isBinOp = String -> Bool: op -> precOf op > 0
+
+-- ─── Driver work frames (§6.1 sum type; rule 1: drive is the only recursion) ──
+--
+-- drive(toks, work, vals, mp) is a single tail-recursive worklist driver.
+--   work : instruction stack (LIFO). Execution order = head to tail.
+--   vals : operand stack of parsed Expr.
+--   mp   : minimum-precedence threshold for the current climb level.
+--
+-- Every call to drive is a tail call, so the only call-graph edge is
+-- drive -> drive (tail) — no cyclic non-tail edge exists (§7 rule 1).
+--
+-- Frames:
+--   PushAtom        parse one atom from toks, push onto vals
+--   WrapUnary op    after the operand lands on vals, wrap it as UnaryOp op e
+--   Climb minPrec   while next token is an op with prec >= minPrec, consume it,
+--                   schedule a higher-precedence RHS parse + combine; else stop
+--   Combine sym lvl pop rhs & lhs from vals, push Arith sym lhs rhs, then climb at `lvl`
+--   ExpectClose c   expect closing token `c` next (RParen/RBracket); consume it,
+--                   leave the top of vals as the result
+
+Frame = PushAtom | WrapUnary String | Climb Int | Combine String Int | ExpectClose Tok
+
+-- ─── Driver (§6.2.1; rule 1: drive is the only recursion, all calls tail) ───
+--
+-- work executes head-to-tail; vals is the operand stack; mp threads the
+-- minimum-precedence threshold through climb levels (plain param, updated in
+-- tail calls only). Every arm ends in a tail call to drive.
+drive = List Tok, List Frame, List Expr, Int -> (Expr, List Tok): toks, work, vals, mp -> match work.popFirst
+  -- No instructions left: top of vals is the result operand.
+  (None, _) -> match vals.popFirst
+    (Some e, _)   -> (e, toks)
+    (None, _)     -> (ParseError "empty operand stack", toks)
+
+  -- Parse one atom and push it onto vals. `match toks` consumes toks, so each
+  -- sub-arm threads its own bound tail; the catch-all binds the remainder.
+  (Some PushAtom, w2) -> match toks.popFirst
+    (Some (IntLit n), t2)   -> drive t2 w2 (vals.prepend (Lit n)) mp
+    (Some (StrLit s), t2)   -> drive t2 w2 (vals.prepend (Str s)) mp
+    (Some (Ident name), t2) -> drive t2 w2 (vals.prepend (Var name)) mp
+    -- Unary prefix: schedule operand parse next, then wrap.
+    (Some (Op op), t2) ->
+      if op == "!" -> drive t2 (w2.prepend (WrapUnary "!")) vals mp
+        op == "-" -> drive t2 (w2.prepend (WrapUnary "-")) vals mp
+        _         -> drive t2 w2 (vals.prepend (ParseError "expected atom")) mp
+    (Some LParen, t2) ->
+      -- Parse the inner expression first (PushAtom + Climb), THEN expect ')'.
+      -- Frames run head-to-tail, so post-processing (ExpectClose) must be last.
+      drive t2 (((w2.prepend (ExpectClose RParen)).prepend (Climb 1)).prepend PushAtom) vals 0
+    (Some _, t2)      -> drive t2 w2 (vals.prepend (ParseError "expected atom")) mp
+    (None, _)         -> drive listNew w2 (vals.prepend (ParseError "expected atom")) mp
+
+  -- Wrap the operand that just landed on vals as a unary operation.
+  (Some (WrapUnary op), w2) -> match vals.popFirst
+    (Some e, rest) -> drive toks w2 (rest.prepend (UnaryOp op e)) mp
+    (None, _)      -> drive toks w2 listNew mp
+
+  -- Combine: pop rhs & lhs, push Arith sym lhs rhs, resume climbing at `lvl`.
+  (Some (Combine sym lvl), w2) -> match vals.popFirst
+    (Some rhs, r1) -> match r1.popFirst
+      (Some lhs, rest) -> drive toks (w2.prepend (Climb lvl)) (rest.prepend (Arith sym lhs rhs)) mp
+      (None, _)        -> drive toks w2 listNew mp
+    (None, _)         -> drive toks w2 listNew mp
+
+  -- Climb: while next token is an op with prec >= this level, consume it and
+  -- schedule a higher-precedence RHS parse + combine; otherwise stop.
+  (Some (Climb minPrec), w2) -> match toks.popFirst
+    (Some (Op sym), t2) ->
+      -- Parse the RHS first (PushAtom + Climb), THEN combine. Frames run
+      -- head-to-tail, so Combine must be scheduled last (tail).
+      -- `sym` is a String (linear in wag); copy it for each consuming use.
+      if precOf (copy sym) >= minPrec -> drive t2 (((w2.prepend (Combine (copy sym) minPrec)).prepend (Climb (precOf (copy sym) + 1))).prepend PushAtom) vals 0
+        _                             -> drive (t2.prepend (Op sym)) w2 vals minPrec
+    (Some t, t2)     -> drive (t2.prepend t) w2 vals minPrec
+    (None, _)        -> drive listNew w2 vals minPrec
+
+  -- Expect a closing token; leave the top of vals as the result.
+  (Some (ExpectClose c), w2) -> match toks.popFirst
+    (Some c2, rest) ->
+      if (copy c) == c2 -> drive rest w2 vals mp
+        _                  -> drive listNew w2 (vals.prepend (ParseError "expected close")) mp
+    (None, _)         -> drive listNew w2 (vals.prepend (ParseError "expected close")) mp
+
+-- ─── Entry point ────────────────────────────────────────────────────────────
+-- Start: parse one atom, then climb binary ops at minimum precedence 1.
+parseExpr = List Tok -> (Expr, List Tok): toks -> drive toks ((listNew.prepend (Climb 1)).prepend PushAtom) listNew 0

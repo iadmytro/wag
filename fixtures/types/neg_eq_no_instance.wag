@@ -1,0 +1,4 @@
+-- Negative: type without an Eq instance — `==` should fail at inference.
+Shape = Circle Int | Square Int
+
+bad = Shape, Shape -> Bool: a, b -> a == b

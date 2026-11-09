@@ -1,0 +1,24 @@
+-- Spec §8.4a (migrated to List, D062 cursor model): emptiness via `peek`.
+-- The condition of an if consumes its argument (rule 10, D070) and runs
+-- before any later arm — so the emptiness test takes a copy and the
+-- original handle survives for `sumList`.
+
+specIsEmpty = List Int -> Bool: lst -> match lst.peek
+  None   -> True
+  Some _ -> False
+
+describe = List Int -> Int: xs -> if
+  specIsEmpty (copy xs) -> 0   -- test a copy; `xs` is consumed by `sumList`
+  _ -> sumList xs
+
+buildTwo = List Int: ->
+  h0 = listNew
+  h1 = h0.append 10
+  h2 = h1.append -4
+  h2
+
+-- (describe of empty, describe of [10, -4]) → (0, 6).
+testReport = (Int, Int): ->
+  e = listNew
+  xs = buildTwo
+  (describe e, describe xs)

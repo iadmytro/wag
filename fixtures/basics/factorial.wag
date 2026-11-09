@@ -1,0 +1,6 @@
+-- Spec §8.1 (transcribed from wag-language-spec.md)
+
+factHelper = Int, Int -> Int: n, acc -> if n == 0 -> acc      -- base case: return the accumulator
+  _ -> factHelper (n - 1) (acc * n)      -- tail call — required by §7 rule 1; raw arithmetic traps on overflow
+
+factorial = Int -> Int: n -> factHelper n 1   -- seed the accumulator with the multiplicative identity

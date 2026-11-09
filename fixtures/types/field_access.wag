@@ -1,0 +1,36 @@
+-- Spec §8.21 (transcribed from wag-language-spec.md)
+
+Geo = Geo lat Int lon Int
+Address = Address city (List Int) street (List Int) geo Geo
+Plan = Plan level Int tier Int
+Account = Account id Int balance Int plan Plan
+Person = Person name (List Int) age Int address Address account Account score Int active Bool tags (List Int)
+
+increment = Int -> Int: x -> x + 1
+
+-- Plain reads: '.' borrows automatically, at every step, regardless of depth.
+isAdult = &Person -> Bool: p -> p.age >= 18
+
+-- match directly on a .-chain result — it is already borrowed, so no
+-- leading & is needed at the match site (§2.3.1):
+summarize = &Person -> Bool: p -> if
+  p.address.geo.lat > 0 -> True
+  p.account.plan.level > 2 -> True
+  _ -> False
+
+-- Single-field update: application syntax (§3.11 arity overloading).
+rename = Person, List Int -> Person: p, newName -> p.name newName
+
+bump = Person -> Person: p -> p.score (increment p.score)
+
+-- Multi-field update as sequential applications (§3.3.1):
+-- RHS reads are borrows (non-consuming), so we can read from the original
+-- before consuming it with a setter.
+promote = Person, Int, List Int, Int -> Person: p, newAge, newCity, newLevel ->
+  latVal = increment p.address.geo.lat
+  balVal = increment p.account.balance
+  p1 = p.age newAge
+  p2 = p1.address.city newCity
+  p3 = p2.address.geo.lat latVal
+  p4 = p3.account.balance balVal
+  p4.account.plan.level newLevel

@@ -1,0 +1,36 @@
+-- 8.23: map type-combination tests — PF→PF, non-PF→PF, PF→non-PF, non-PF→non-PF
+-- Uses prelude `map` (polymorphic: (T -> U), List T -> List U) over region lists.
+
+plus = Int, Int -> Int: a, b -> a + b
+
+-- PF -> PF: Int -> Int
+inc = Int -> Int: x -> x + 1
+
+-- PF -> PF: Int -> Int (sign as 0/1)
+pos = Int -> Int: x -> if x > 0 -> 1
+  _ -> 0
+
+-- non-PF -> PF: List Int -> Int (sum a sublist; consuming fold).
+subSum = List Int -> Int: xs -> fold plus 0 xs
+
+-- PF -> non-PF: Int -> List Int (replicate 0..n-1 via prelude range).
+rep = Int -> List Int: n -> range 0 (n - 1)
+
+-- Helper: sum a flat list.
+sumList = List Int -> Int: xs -> fold plus 0 xs
+
+-- Test entry points (each returns a scalar for easy assertion)
+-- PF->PF: map inc [1,2,3] = [2,3,4], sum = 9
+t_pf_pf = List Int -> Int: xs -> sumList (map inc xs)
+
+-- PF->PF: map pos [-1,0,3] = [0,0,1], sum = 1
+t_pf_pf_sign = List Int -> Int: xs -> sumList (map pos xs)
+
+-- non-PF->PF: map subSum [[1,2],[3,4]] = [3,7], sum = 10
+t_nonpf_pf = List (List Int) -> Int: xss -> sumList (map subSum xss)
+
+-- non-PF->non-PF: map reverse [[1,2],[3,4]] = [[2,1],[4,3]], sum of sums = 10
+t_nonpf_nonpf = List (List Int) -> Int: xss -> sumList (map subSum (map reverse xss))
+
+-- PF->non-PF: map rep [2,3] = [[0,1],[0,1,2]], sum = 0+1+0+1+2 = 5
+t_pf_nonpf = List Int -> Int: xs -> sumList (map subSum (map rep xs))

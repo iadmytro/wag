@@ -1,0 +1,156 @@
+-- ast.wag — AST (Abstract Syntax Tree) definitions for the WAG-in-WAG parser.
+--
+-- Purpose: Define all recursive data types the parser produces.
+--
+-- How it works:
+--   WAG permits recursive user types (§7 rule 14, D047). Each AST node is
+--   a constructor of a data type. Recursive types (Expr contains Expr,
+--   Decl contains Expr, etc.) are legal because the type checker verifies
+--   well-foundedness (no infinite types).
+--
+--   Types:
+--     - Expr: expression AST (recursive: contains List Expr, etc.)
+--     - TypeExpr: type expression AST (Int, List T, (A, U), &T, T -> U)
+--     - Pattern: match/if pattern (variable, constructor, wildcard)
+--     - Decl: top-level declaration (function, actor, data type)
+--     - Module: full module (header + declarations)
+--
+--   astToString: worklist-based tree-to-string (tail-recursive, rule 1).
+
+export
+  ..
+
+import
+  prelude
+    ..
+
+-- ─── Expressions ────────────────────────────────────────────────────────────
+
+Expr = ParseError String | Lit Int | Str String | ListLit (List Expr)
+     | Var String | App (List Expr) | Arith String Expr Expr
+     | If (List IfArm) | Match Expr (List MatchArm)
+     | Let String Expr Expr | Do (List Stmt)
+     | FieldRead Expr String | FieldWrite Expr String Expr
+     | UnaryOp String Expr
+
+-- ─── Arms & Statements ──────────────────────────────────────────────────────
+
+IfArm = IfArm (Option Expr) Expr
+
+MatchArm = MatchArm String (List String) Expr
+
+Stmt = Stmt String Expr
+
+-- ─── Type expressions ───────────────────────────────────────────────────────
+
+TypeExpr = TypeVar String | TypeCon String | TypeApp String List TypeExpr
+         | TypeBorrow TypeExpr | TypeFun List TypeExpr TypeExpr
+
+-- ─── Patterns ───────────────────────────────────────────────────────────────
+
+Pattern = PatVar String | PatWild | PatCon String (List Pattern)
+
+-- ─── Declarations ───────────────────────────────────────────────────────────
+
+Decl = FuncDecl String (List TypeExpr) TypeExpr (List String) Expr
+     | ActorDecl String (List TypeExpr) TypeExpr (List String) Expr
+     | DataTypeDecl String (List CtorDecl)
+
+CtorDecl = CtorDecl String (List String)
+
+-- ─── Module ─────────────────────────────────────────────────────────────────
+
+Module = Module (List String) (List String) (List Decl)
+--        exports    imports      decls
+
+-- ─── astToString (rich-worklist tree-to-string, tail-recursive) ──────────────
+--
+-- A naive recursive renderer can't be written in wag: combining a node's text with its
+-- children's results is not a tail call (§7 rule 1). Instead we drive an explicit worklist
+-- of *operations* (the "rich worklist" design): each op is either "render this expression"
+-- or "append literal text". Encountering RenderExpr expands it into finer ops via
+-- decomposeE, so all pending work is ordinary first-order data on the stack — no closures,
+-- no call-stack hiding. The only recursion is astLoop -> astLoop (tail); the decompose*
+-- builders are non-recursive one-shot list constructors, so there is no cyclic non-tail
+-- edge (§7 rule 1).
+--
+-- NOTE: for a chain-shaped AST (deeply right-nested Arith/App) the worklist grows to O(N)
+-- ops and each node pays an extra concat flatten. Revisit as an optimization — see
+-- doc/wag-next-plan.md "Parser-in-WAG example".
+
+Op = RenderExpr Expr | Text String
+   | IfArmOp IfArm | MatchArmOp MatchArm | StmtOp Stmt
+
+astToString = Expr -> String: e -> astLoop (decomposeE e) ""
+
+-- Expand one expression into the ops that render it. Children are wrapped as RenderExpr so
+-- they expand later, in tail position inside astLoop. Non-recursive (no call back into
+-- astLoop or itself). NOTE: constructors can't be passed bare to map (VM panic), so use
+-- lambda wrappers like `map (x -> RenderExpr x)`.
+decomposeE = Expr -> List Op: e -> match e
+  Lit n          -> [Text (show n)]
+  Str s          -> [Text s]
+  Var name       -> [Text name]
+  ParseError msg -> [Text msg]
+  Arith op l r   -> concat [[RenderExpr l], [Text op], [RenderExpr r]]
+  App es         -> map (x -> RenderExpr x) es
+  ListLit elems  -> concat [[Text "["], listLitOps elems, [Text "]"]]
+  If arms        -> concat [[Text "if "], map (a -> IfArmOp a) arms]
+  Match s arms   -> concat [[Text "match "], [RenderExpr s], [Text " {"], matchBody arms, [Text "}"]]
+  Let n v b      -> concat [[Text ("let " + n + " = ")], [RenderExpr v], [Text " in "], [RenderExpr b]]
+  Do stmts       -> concat [[Text "do {"], doBody stmts, [Text "}"]]
+  FieldRead o f  -> concat [[RenderExpr o], [Text ("." + f)]]
+  FieldWrite o f v -> concat [[RenderExpr o], [Text ("." + f)], [Text " <- "], [RenderExpr v]]
+  UnaryOp op e   -> concat [[Text op], [RenderExpr e]]
+
+-- Decompose an if-arm: "[cond] -> body" (or "_ -> body"). Non-recursive.
+decomposeIfArm = IfArm -> List Op: arm -> match arm
+  IfArm cond body -> match cond
+    Some c -> concat [[RenderExpr c], [Text " -> "], [RenderExpr body]]
+    None   -> concat [[Text "_ -> "], [RenderExpr body]]
+
+-- Decompose a match-arm: "pattern arg1 arg2 ... -> body". Args are variable names (List String),
+-- rendered as text, not expressions; each is space-separated from the pattern name so tokens
+-- never glue (e.g. "Ctor a", not "Ctora"). Non-recursive.
+decomposeMatchArm = MatchArm -> List Op: arm -> match arm
+  MatchArm pattern args body -> concat [[Text pattern], map (a -> Text (stringConcat " " a)) args, [Text " -> "], [RenderExpr body]]
+
+-- Decompose one do-statement: "kind expr" (space between kind and its expression). Non-recursive.
+decomposeStmt = Stmt -> List Op: stmt -> match stmt
+  Stmt kind expr -> concat [[Text (kind + " ")], [RenderExpr expr]]
+
+-- Build the ops for a match body, separating arms with "; " so they never glue. Tail-recursive
+-- (only mab -> mab in tail position).
+matchBody = List MatchArm -> List Op: as -> mab as listNew
+mab = List MatchArm, List Op -> List Op: as, acc -> match as.popFirst
+  (None, _)   -> acc
+  (Some a, r) -> if r.isEmpty -> concat [acc, decomposeMatchArm a]
+                _             -> mab r (concat [acc, decomposeMatchArm a, [Text "; "]])
+
+-- Build the ops for a do-block body, separating statements with "; " so they never glue.
+-- Tail-recursive; the only recursion is dsb -> dsb in tail position.
+doBody = List Stmt -> List Op: ss -> dsb ss listNew
+dsb = List Stmt, List Op -> List Op: ss, acc -> match ss.popFirst
+  (None, _)   -> acc
+  (Some s, r) -> if r.isEmpty -> concat [acc, decomposeStmt s]
+                _             -> dsb r (concat [acc, decomposeStmt s, [Text "; "]])
+
+-- Build ops for "[e1, e2, ...]" element list (forward order, ", " between). Tail-recursive;
+-- the only recursion is llh -> llh in tail position.
+listLitOps = List Expr -> List Op: elems -> llh elems listNew
+llh = List Expr, List Op -> List Op: elems, acc -> match elems.popFirst
+  (None, _)   -> acc
+  (Some e, r) -> if r.isEmpty -> concat [acc, [RenderExpr e]]
+                _             -> llh r (concat [acc, [RenderExpr e], [Text ", "]])
+
+-- The worklist driver. Every recursive call is a tail call (§7 rule 1).
+astLoop = List Op, String -> String: ops, acc -> match ops.popFirst
+  (None, _)   -> acc
+  (Some op, rest) -> handleOp op rest acc
+
+handleOp = Op, List Op, String -> String: op, rest, acc -> match (copy op)
+  Text s         -> astLoop rest (acc + s)
+  RenderExpr e   -> astLoop (concat [decomposeE e, rest]) acc
+  IfArmOp arm    -> astLoop (concat [decomposeIfArm arm, rest]) acc
+  MatchArmOp arm -> astLoop (concat [decomposeMatchArm arm, rest]) acc
+  StmtOp stmt    -> astLoop (concat [decomposeStmt stmt, rest]) acc

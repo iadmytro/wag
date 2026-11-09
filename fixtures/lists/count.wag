@@ -1,0 +1,28 @@
+-- Spec §8.12 (migrated to List, D062 cursor model): borrowed peek/step walk —
+-- the input list is not consumed and stays reusable after `count`.
+
+countStep = Int, List Int, Int -> Int: x, h, acc ->
+  match h.peek
+    None   -> acc
+    Some v ->
+      acc2 = if v == x -> acc + 1
+        _    -> acc
+      match h.step
+        None    -> acc2
+        Some h2 -> countStep x h2 acc2
+
+count = Int, List Int -> Int: x, lst -> countStep x lst 0
+
+buildFour = List Int: ->
+  h0 = listNew
+  h1 = h0.append 1
+  h2 = h1.append -3
+  h3 = h2.append 7
+  h4 = h3.append 1
+  h4
+
+-- (count of 1, count of 9) over [1, -3, 7, 1] → (2, 0).
+-- rule 10: each `count` consumes its owned handle, so both get copies.
+testReport = (Int, Int): ->
+  xs = buildFour
+  (count 1 (copy xs), count 9 (copy xs))

@@ -1,0 +1,5 @@
+import
+  mid
+    add_one
+
+main = add_one 41

@@ -1,0 +1,7 @@
+-- Spec §8.2 (transcribed from wag-language-spec.md)
+
+fibHelper = Int, Int, Int -> Int: n, a, b -> if 
+  n == 0 -> a    -- a is the answer once n counts down to 0
+  _ -> fibHelper (n - 1) (copy b) (a + b)   -- shift the window forward: (a, b) -> (b, a+b); tail call
+
+fib = Int -> Int: n -> fibHelper n 0 1   -- start the window at fib(0)=0, fib(1)=1

@@ -1,0 +1,12 @@
+-- test/ast.wag — representative tests for src/ast.wag (AST datatypes + astToString).
+--
+-- Runs via `wagc test examples/parser/test`; merged into src/ast.wag's namespace,
+-- so Expr / Lit / Arith / Var / astToString resolve here.
+
+test_main = Unit:  ->
+  -- A leaf literal stringifies to its value.
+  assert (astToString (Lit 42) == "42") "Lit round-trips"
+  -- An arithmetic node stringifies as op ++ left ++ right.
+  assert (astToString (Arith "+" (Lit 1) (Lit 2)) == "1+2") "Arith is left++op++right"
+  -- A variable references stringify to their name.
+  assert (astToString (Var "x") == "x") "Var round-trips"

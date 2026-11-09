@@ -1,0 +1,66 @@
+-- Deep records: 4-level field paths, multi-field updates at each depth.
+
+AddrLine = AddrLine label (List Int) num Int
+Town = Town name (List Int) zip Int lines (Arr (Option AddrLine))
+Region = Region code (List Int) towns (Arr (Option Town))
+Profile = Profile id Int age Int region Region active Bool
+
+-- Build a sample profile with nested structure.
+buildSample = Profile: ->
+  l0 = AddrLine [1, 2] 100
+  l1 = AddrLine [3, 4] 200
+  ln0 = arrSet (arrNew 2) 0 (Some l0)
+  ln1 = arrSet ln0 1 (Some l1)
+  t0 = Town [5, 6] 98765 ln1
+  tn0 = arrSet (arrNew 1) 0 (Some t0)
+  rg = Region [7, 8] tn0
+  Profile 42 30 rg True
+
+-- Read at depth 4: profile.region.towns[0].lines[1].num
+deepRead = &Profile -> Option Int: p ->
+  ti = arrGet p.region.towns 0
+  match ti
+    None   -> None
+    Some tOpt ->
+      match tOpt
+        None     -> None
+        Some (Town _ _ lines) ->
+          li = arrGet lines 1
+          match li
+            None   -> None
+            Some lOpt ->
+              match lOpt
+                None     -> None
+                Some (AddrLine _ num) -> Some num
+
+-- Multi-field update at depth 3: change town zip and line num.
+updateDeep = Profile, Int, Int -> Profile: p, newZip, newNum ->
+  ti = arrGet p.region.towns 0
+  match ti
+    None   -> p
+    Some tOpt ->
+      match tOpt
+        None     -> p
+        Some (Town name _ lines) ->
+          li = arrGet lines 1
+          match li
+            None   -> p
+            Some lOpt ->
+              match lOpt
+                None     -> p
+                Some (AddrLine label _) ->
+                  nl = AddrLine label newNum
+                  nt2 = arrSet lines 1 (Some nl)
+                  nt = Town name newZip nt2
+                  ta = arrFromList [Some nt]
+                  match p
+                    Profile id age rg active ->
+                      match rg
+                        Region code _ -> Profile id age (Region code ta) active
+
+testReport = (Option Int, Option Int): ->
+  p = buildSample
+  r1 = deepRead p
+  p2 = updateDeep p 11111 999
+  r2 = deepRead p2
+  (r1, r2)

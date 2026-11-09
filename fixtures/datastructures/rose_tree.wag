@@ -1,0 +1,59 @@
+-- Rose tree: mutual recursion between Tree and its children list.
+-- Exercises list-of-trees composition, mutual type depth, tail-recursive walks.
+-- Traversal uses a pre-flattened work-list (all nodes in one List) to avoid
+-- field access through borrowed values (§7 rule 15).
+
+Tree = Node val Int children (List Tree)
+
+treeNew = Int -> Tree: v -> Node v listNew
+
+-- Count nodes in a flat list of trees (tail-recursive peek/step walk).
+countWalk = List Tree, Int -> Int: pending, acc -> match pending.peek
+  None   -> acc
+  Some _ ->
+    match pending.step
+      None   -> acc + 1
+      Some r -> countWalk r (acc + 1)
+
+-- Sum values in a flat list of trees (tail-recursive peek/step walk).
+sumWalk = List Tree, Int -> Int: pending, acc -> match pending.peek
+  None   -> acc
+  Some t ->
+    v = match t
+      Node v _ -> v
+    match pending.step
+      None   -> acc + v
+      Some r -> sumWalk r (acc + v)
+
+-- Build a flat list of 7 leaf trees with values 1..7.
+buildFlatList = List Tree: ->
+  f0 = listNew
+  f1 = f0.append (treeNew 1)
+  f2 = f1.append (treeNew 2)
+  f3 = f2.append (treeNew 3)
+  f4 = f3.append (treeNew 4)
+  f5 = f4.append (treeNew 5)
+  f6 = f5.append (treeNew 6)
+  f7 = f6.append (treeNew 7)
+  f7
+
+-- Build a small rose tree.
+--        1
+--      / | \
+--     2  3  4
+--    /     |\
+--   5       6 7
+buildTree = Tree: ->
+  t5 = treeNew 5
+  t2 = Node 2 [t5]
+  t6 = treeNew 6
+  t7 = treeNew 7
+  t4 = Node 4 [t6, t7]
+  t3 = treeNew 3
+  Node 1 [t2, t3, t4]
+
+testReport = (Int, Int): ->
+  f1 = buildFlatList
+  f2 = buildFlatList
+  _tree = buildTree
+  (countWalk f1 0, sumWalk f2 0)

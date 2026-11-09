@@ -1,0 +1,19 @@
+-- D075 negative: map on List Int requires (Int -> Int); Bool return is a mismatch.
+Map C =
+  map : (E -> F), C E -> C F
+
+specMapH = (Int -> Int), List Int, List Int -> List Int: f, lst, out ->
+  match lst.peek
+    None   -> out
+    Some h ->
+      out2 = out.append (f h)
+      match lst.step
+        None   -> out2
+        Some t -> specMapH f t out2
+
+Map List =
+  map f xs = specMapH f xs listNew
+
+badFn = Int -> Bool: x -> True
+xs = listNew.append 1
+result = map badFn xs

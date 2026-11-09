@@ -1,0 +1,27 @@
+import
+  prelude
+    ..
+
+-- D081: abandonment death — worker actor terminates, main continues.
+-- Worker shape: (Int, WorkerMsg) -> Int. Main shape: (Int, MainMsg) -> Int.
+
+WorkerMsg = Work | Done
+
+@worker = Int, WorkerMsg -> Int: state, msg -> match msg
+  Work -> state + 1
+  Done -> state
+
+MainMsg = Start (List String) | End Int
+
+@main = @std: Int, MainMsg -> Int: st, msg -> match msg
+  Start _ ->
+    w@ = @worker 0
+    w@ Work
+    w@ Done
+    s@ = @std
+    s@ (Write "started")
+    self@ (End 0)
+    0
+  End code -> code
+  Line _ -> st
+  EndOfInput -> st

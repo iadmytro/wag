@@ -1,0 +1,4 @@
+export
+  base_val
+
+base_val = 1

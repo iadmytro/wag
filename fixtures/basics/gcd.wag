@@ -1,0 +1,6 @@
+-- Spec §8.9 (transcribed from wag-language-spec.md)
+
+gcd = Int, Int -> Int: a, b -> if 
+  a == b -> a
+  a > b -> gcd (a - b) b    -- tail call
+  _ -> gcd (copy a) (b - a)        -- tail call

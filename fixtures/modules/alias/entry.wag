@@ -1,0 +1,5 @@
+import
+  lib
+    sq <- square
+
+main = sq 7

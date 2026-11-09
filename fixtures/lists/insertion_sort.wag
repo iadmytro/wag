@@ -1,0 +1,55 @@
+-- Spec §8.13 (migrated to List, D062 cursor model): the insertion point is
+-- found by a borrowed peek/step walk; O(1) tail append makes the original's
+-- accumulate-reversed-then-unreverse dance unnecessary — walked elements are
+-- appended in order, and the untouched remainder is spliced on at the end.
+
+appendRest = List Int, List Int -> List Int: src, dst ->
+  match src.peek
+    None   -> dst
+    Some v ->
+      d2 = dst.append v
+      match src.step
+        None    -> d2
+        Some s2 -> appendRest s2 d2
+
+insertHelper = Int, List Int, List Int -> List Int: x, lst, out ->
+  match lst.peek
+    None   -> out.append x
+    Some h -> if x <= h ->
+      o2 = out.append x
+      appendRest lst o2
+    _ ->
+      o2 = out.append h
+      match lst.step
+        None   -> o2.append x
+        Some t -> insertHelper x t o2
+
+insert = Int, List Int -> List Int: x, lst ->
+  o0 = listNew
+  insertHelper x lst o0
+
+insertionSortHelper = List Int, List Int -> List Int: lst, acc ->
+  match lst.peek
+    None   -> acc
+    Some h ->
+      match lst.step
+        None   -> insert h acc
+        Some t -> insertionSortHelper t (insert h acc)
+
+insertionSort = List Int -> List Int: lst ->
+  a0 = listNew
+  insertionSortHelper lst a0
+
+buildThree = List Int: ->
+  h0 = listNew
+  h1 = h0.append 3
+  h2 = h1.append -1
+  h3 = h2.append 2
+  h3
+
+-- (head, length) of sort [3, -1, 2] → (-1, 3).
+testReport = (Int, Int): ->
+  s = insertionSort buildThree
+  match s.peek
+    Some v -> (v, length s)
+    None   -> (-1, -1)

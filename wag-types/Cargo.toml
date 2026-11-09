@@ -1,0 +1,12 @@
+[package]
+name = "wag-types"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "WAG type acyclicity check and monomorphic inference"
+
+[dependencies]
+wag-syntax = { path = "../wag-syntax" }
+
+[dev-dependencies]
+proptest = { workspace = true }

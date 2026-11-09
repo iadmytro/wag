@@ -1,0 +1,6 @@
+export
+  public_fn
+
+public_fn = 1
+
+private_fn = 2

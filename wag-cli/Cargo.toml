@@ -1,0 +1,31 @@
+[package]
+name = "wag-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "wagc — WAG compiler/runner CLI"
+default-run = "wagc"
+
+[[bin]]
+name = "wagc"
+path = "src/main.rs"
+
+[lib]
+name = "wag_cli"
+path = "src/lib.rs"
+
+[dependencies]
+ariadne = { workspace = true }
+toml = { workspace = true }
+wag-syntax = { path = "../wag-syntax" }
+wag-types = { path = "../wag-types" }
+wag-check = { path = "../wag-check" }
+wag-interp = { path = "../wag-interp" }
+wag-runtime = { path = "../wag-runtime" }
+
+[dev-dependencies]
+criterion = { workspace = true }
+
+[[bench]]
+name = "pipeline"
+harness = false

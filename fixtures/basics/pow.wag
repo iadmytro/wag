@@ -1,0 +1,7 @@
+-- Spec §8.10 (transcribed from wag-language-spec.md)
+
+powHelper = Int, Int, Int -> Int: base, exp, acc -> if
+  exp == 0 -> acc
+  _ -> powHelper (copy base) (exp - 1) (acc * base)   -- tail call
+
+pow = Int, Int -> Int: base, exp -> powHelper base exp 1   -- seed with the multiplicative identity

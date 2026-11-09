@@ -1,0 +1,33 @@
+-- Spec §8.8 (migrated to List, D062 cursor model): borrowed peek/step walk —
+-- the first element seeds the search; the input stays reusable afterwards.
+
+maxHelper = List Int, Int -> Int: lst, best ->
+  match lst.peek
+    None   -> best
+    Some h ->
+      b2 = if h > best -> h
+        _    -> best
+      match lst.step
+        None   -> b2
+        Some t -> maxHelper t b2
+
+maxList = List Int -> Option Int: lst -> match lst.peek
+  None   -> None
+  Some h -> match lst.step
+    None   -> Some h
+    Some t -> Some (maxHelper t h)
+
+buildFour = List Int: ->
+  h0 = listNew
+  h1 = h0.append 3
+  h2 = h1.append -1
+  h3 = h2.append 9
+  h4 = h3.append 4
+  h4
+
+-- max of [3, -1, 9, 4] → 9.
+testReport = Int: ->
+  r = maxList buildFour
+  match r
+    Some v -> v
+    None   -> -100

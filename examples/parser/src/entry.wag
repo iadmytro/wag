@@ -1,0 +1,65 @@
+-- entry.wag — Test harness for the WAG-in-WAG parser.
+--
+-- Purpose: Wire together lexer → parser, run on real fixture files, and
+-- print results via @std. Serves as the executable entry point for the
+-- parser example.
+--
+-- How it works:
+--   1. @main actor receives Start message with argv.
+--   2. Sends ReadFile to @file to load a fixture (fixtures/basics/factorial.wag).
+--   3. On FileContent: lex the source → count tokens.
+--   4. Also lex a hardcoded expression "1 + 2 * 3" and parse it.
+--   5. Prints token count and parse status to stdout.
+--
+-- This is a minimal smoke test, not a full test suite. The goal is to
+-- demonstrate that the pipeline (lex → parse → AST) works end-to-end
+-- in WAG itself, and to surface ergonomic gaps in the language.
+
+import
+  prelude
+    ..
+  lex
+    lex
+  parse
+    parseExpr
+  token
+    ..
+  ast
+    ..
+
+MainMsg = Start (List String) | End Int
+
+@main = @std, @file: Int, MainMsg -> Int: st, msg ->
+  match msg
+    Start argv ->
+      file@ = @file
+      file@ (ReadFile "fixtures/basics/factorial.wag" self)
+      0
+    End code ->
+      ()
+    @file.FileContent data ->
+      io@ = @std
+      -- Lexing + parsing pipeline on a real infix expression: lex → parseExpr → AST.
+      -- List Tok is linear, so copy once for the parser after counting below.
+      exprToks = lex "1 + 2 * 3"
+      toksCopy = copy exprToks
+      parsed = match (parseExpr toksCopy)
+        (e, _) -> e
+        _ -> ParseError "unreachable"
+      astStr = match parsed
+        (ParseError msg) -> "PARSE ERROR: " + msg
+        e -> "AST: " + astToString e
+      -- Lexing the fixture and counting tokens.
+      fToks = copy (lex data)
+      n = length fToks
+      io@ (Write (show n + " tokens from fixture"))
+      io@ (Write astStr)
+      self@ (End 0)
+      0
+    @file.FileError err ->
+      io@ = @std
+      io@ (Write ("file error: " + err))
+      self@ (End 1)
+      0
+    @std.Line _ -> 0
+    @std.EndOfInput -> 0

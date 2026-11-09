@@ -1,0 +1,13 @@
+# Rust build artifacts (fuzz/ has its own .gitignore)
+/target
+
+# macOS
+.DS_Store
+
+# IDE
+.idea/
+
+# Local-only docs & AI assistant instructions
+doc/
+CLAUDE.md
+DECISIONS.md

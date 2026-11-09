@@ -1,0 +1,36 @@
+-- Minimal test: lex + parse "1 + 2 * 3", print result. No file I/O.
+import
+  prelude
+    ..
+  lex
+    lex
+  parse
+    parseExpr
+  token
+    ..
+  ast
+    ..
+
+MainMsg = Start (List String) | End Int
+
+@main = @std: Int, MainMsg -> Int: st, msg ->
+  match msg
+    Start argv ->
+      io@ = @std
+      exprToks = lex "1 + 2 * 3"
+      toksA = copy exprToks
+      n = length toksA
+      parsed = match (parseExpr exprToks)
+        (e, _) -> e
+        _ -> ParseError "unreachable"
+      astStr = match parsed
+        (ParseError msg) -> "PARSE ERROR: " + msg
+        e -> "AST: " + astToString e
+      io@ (Write ("tokens=" + show n))
+      io@ (Write astStr)
+      self@ (End 0)
+      0
+    End code ->
+      ()
+    @std.Line _ -> 0
+    @std.EndOfInput -> 0

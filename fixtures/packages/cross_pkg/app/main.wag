@@ -1,0 +1,5 @@
+import
+  lib
+    double
+
+main = double 21

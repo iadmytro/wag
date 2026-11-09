@@ -1,0 +1,4 @@
+-- Rule 11e: send a borrowed message value.
+Msg = Msg Int
+
+bad = &Msg, Actor Msg -> Unit: m, target -> target@ m

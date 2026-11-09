@@ -1,0 +1,49 @@
+-- Binary search tree: hardcoded structure, tail-recursive search/min/max walks.
+-- Exercises deep pattern matching, linearity through parametric types, rule-1 compliance.
+
+BST = Leaf | Node left (BST T) val Int right (BST T)
+
+bstSearch = &BST Int, Int -> Bool: t, v -> match t
+  Leaf -> False
+  Node l x r -> if v == x -> True
+    _       -> if v < x -> bstSearch l v
+      _     -> bstSearch r v
+
+bstMin = BST Int -> Option Int: t -> match t
+  Leaf -> None
+  Node l x r -> if isLeaf l -> Some x
+    _        -> bstMin l
+
+bstMax = BST Int -> Option Int: t -> match t
+  Leaf -> None
+  Node l x r -> if isLeaf r -> Some x
+    _        -> bstMax r
+
+isLeaf = &BST T -> Bool: t -> match t
+  Leaf -> True
+  _    -> False
+
+-- Hardcoded BST (7 nodes, balanced):
+--         5
+--        / \
+--       3   7
+--      / \ / \
+--     1  4 6  8
+buildTree = BST Int: ->
+  left3 = Node Leaf 1 Leaf
+  right3 = Node Leaf 4 Leaf
+  left5 = Node left3 3 right3
+  left7 = Node Leaf 6 Leaf
+  right7 = Node Leaf 8 Leaf
+  right5 = Node left7 7 right7
+  Node left5 5 right5
+
+testReport = (Bool, Bool, Option Int, Option Int): ->
+  t1 = buildTree
+  t2 = buildTree
+  t3 = buildTree
+  s1 = bstSearch t1 4
+  s2 = bstSearch t1 9
+  mn = bstMin t2
+  mx = bstMax t3
+  (s1, s2, mn, mx)

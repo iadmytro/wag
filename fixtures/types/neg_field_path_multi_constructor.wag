@@ -1,0 +1,4 @@
+-- Rule 15: field access on a multi-constructor type (shared label).
+Choice = Alpha value Int | Beta value Int
+
+bad = &Choice -> Int: c -> c.value

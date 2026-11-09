@@ -1,0 +1,18 @@
+import
+  prelude
+    ..
+
+-- D081: filter list — writes "filter", exits.
+-- Main shape: (Int, MainMsg) -> Int.
+
+MainMsg = Start (List String) | End Int
+
+@main = @std: Int, MainMsg -> Int: st, msg -> match msg
+  Start _ ->
+    s@ = @std
+    s@ (Write "filter")
+    self@ (End 0)
+    0
+  End code -> code
+  Line _ -> st
+  EndOfInput -> st

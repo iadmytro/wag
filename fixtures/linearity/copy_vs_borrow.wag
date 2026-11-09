@@ -1,0 +1,20 @@
+-- Spec §8.16 (post item-8 cutover): borrow semantics on region lists.
+-- A borrowed handle supports repeated non-consuming reads; consuming
+-- traversal (`popFirst`) requires ownership, and repeatable views come from
+-- the borrowed `mapB` walk (rewinds on entry).
+
+inc = Int -> Int: x -> x + 1
+dec = Int -> Int: x -> x - 1
+
+-- Both reads take &List Int — neither needs ownership: a borrow can be read
+-- repeatedly (field paths auto-deref through the handle's Refs).
+borrowTwice = &List Int -> (Int, Int): xs -> 
+  result = (xs.len, xs.len)
+  result
+
+-- Two independently-owned views of one source: `copy` produces an independent
+-- handle; `mapB` is a borrowed peek/step walk that rewinds on entry.
+twoViews = List Int -> (List Int, List Int): xs ->
+  a = mapB inc (copy xs)
+  b = mapB dec (copy xs)
+  (a, b)

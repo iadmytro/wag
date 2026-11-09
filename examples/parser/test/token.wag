@@ -1,0 +1,15 @@
+-- test/token.wag — tests for src/token.wag (the D075 Render typeclass instance).
+--
+-- Runs via `wagc test examples/parser/test`; merged into src/token.wag's
+-- namespace, so Tok / render / show resolve here without an import block.
+
+renderIntLit = String:  -> render (IntLit 42)
+renderOpPlus = String:  -> render (Op "+")
+renderIdent = String:   -> render (Ident "foo")
+renderEof = String:     -> render EOF
+
+test_main = Unit:  ->
+  assert (renderIntLit == "IntLit:42") "IntLit renders with its value"
+  assert (renderOpPlus == "Op:+") "Op renders with its text"
+  assert (renderIdent == "Ident:foo") "Ident renders with its name"
+  assert (renderEof == "EOF") "EOF renders bare"

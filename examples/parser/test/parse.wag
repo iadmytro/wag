@@ -1,0 +1,22 @@
+-- test/parse.wag — representative tests for src/parse.wag (the expression parser).
+--
+-- Runs via `wagc test examples/parser/test`. The items here are merged into
+-- src/parse.wag's namespace, so parseExpr / astToString resolve through the source
+-- module's own imports; lex is pulled in by the import block below (unioned with
+-- the source's imports when this file is run).
+
+import
+  lex
+    lex
+
+astOf = String -> Expr: src -> match (parseExpr (lex src))
+  (h, _) -> h
+  _ -> ParseError "unreachable"
+
+test_main = Unit:  ->
+  -- Precedence: `*` binds tighter than `+`.
+  assert (astToString (astOf "1 + 2 * 3") == "1+2*3") "precedence: * binds tighter than +"
+  -- Parens override precedence. (Renderer omits parens, so both forms stringify identically.)
+  assert (astToString (astOf "(1 + 2) * 3") == "1+2*3") "parens override precedence"
+  -- A bare integer literal round-trips unchanged.
+  assert (astToString (astOf "42") == "42") "integer literal round-trips"

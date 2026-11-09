@@ -1,0 +1,21 @@
+-- D081: cross-thread reference — actor shape is (State, Msg) -> State.
+-- The actor holds an Int and replies with its value.
+
+RefMsg = Get (Actor ReplyMsg)
+ReplyMsg = Val Int
+
+@ref = Int, RefMsg -> Int: state, msg -> match msg
+  Get replyTo ->
+    replyTo@ (Val (copy state))
+    state
+
+SenderMsg = Go (Actor ReceiverMsg)
+ReceiverMsg = Put Int
+
+@sender = Int, SenderMsg -> Int: state, msg -> match msg
+  Go target ->
+    target@ (Put 42)
+    state
+
+@receiver = Int, ReceiverMsg -> Int: state, msg -> match msg
+  Put v -> v

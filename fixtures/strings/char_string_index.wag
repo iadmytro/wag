@@ -1,0 +1,34 @@
+-- Char + string indexing (§3.10 / §3.11).
+-- A `Char` is a Unicode scalar value (codepoint) — pointer-free and comparable.
+-- `stringGet` is codepoint-indexed, `stringByteAt` byte-indexed; both bounds-checked.
+-- Pure functions so the pipeline harness can drive them via `call_fn`.
+
+-- "hé" is codepoints [104 'h', 233 'é'], bytes [104, 195, 169].
+
+-- First codepoint is 104 ('h'); second is 233 ('é').
+first = Option Char:  -> stringGet "hé" 0
+second = Option Char:  -> stringGet "hé" 1
+
+-- Out of bounds -> None.
+oob = Option Char:  -> stringGet "hé" 5
+
+-- Byte 0 is 104 ('h'); byte 2 is 169 (0xA9, the second byte of 'é'); byte 3 is OOB.
+byte0 = Option Int:  -> stringByteAt "hé" 0
+byte2 = Option Int:  -> stringByteAt "hé" 2
+byteOob = Option Int:  -> stringByteAt "hé" 3
+
+-- Codepoint -> Char bridge is total: 104 is valid, 55296 (0xD800) is a surrogate -> None.
+cpH = Option Char:  -> codepointToChar 104
+cpSurrogate = Option Char:  -> codepointToChar 55296
+
+-- Char == Char: 'h' (from stringGet) equals 'h' (from codepointToChar) -> True.
+hEqH = Option Bool:  -> do
+  a <- stringGet "hé" 0
+  b <- codepointToChar 104
+  return (a == b)
+
+-- Char != Char: 'h' (104) differs from 'é' (233) -> True.
+hNeE = Option Bool:  -> do
+  a <- stringGet "hé" 0
+  b <- stringGet "hé" 1
+  return (a != b)

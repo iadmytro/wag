@@ -1,0 +1,31 @@
+-- Spec §8.11 (migrated to List, D062 cursor model): borrowed peek/step walk —
+-- the input list is not consumed and stays reusable after `contains`.
+
+containsStep = Int, List Int -> Bool: x, h ->
+  match h.peek
+    None   -> False
+    Some v -> if v == x -> True
+              _ ->
+                match h.step
+                  None    -> False
+                  Some h2 -> containsStep x h2
+
+contains = Int, List Int -> Bool: x, lst -> containsStep x lst
+
+buildThree = List Int: ->
+  h0 = listNew
+  h1 = h0.append 1
+  h2 = h1.append -3
+  h3 = h2.append 7
+  h3
+
+-- 0 iff `contains` finds 7 and not 5. rule 10: each call consumes its owned
+-- handle, so both get independent copies (the underlying list survives).
+testReport = Int: ->
+  xs = buildThree
+  r1 = contains 7 (copy xs)
+  r2 = contains 5 (copy xs)
+  if r1 ->
+    if r2 -> 99
+      _   -> 0
+  _ -> 98

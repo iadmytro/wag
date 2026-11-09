@@ -1,0 +1,27 @@
+import
+  prelude
+    ..
+
+-- D081: ref cursor walk — actor sends to itself, stays alive.
+-- Walker shape: (Int, WalkMsg) -> Int. Main: (Int, MainMsg) -> Int.
+
+WalkMsg = Go
+
+@walker = Int, WalkMsg -> Int: state, msg -> match msg
+  Go ->
+    self@ Go
+    state
+
+MainMsg = Start (List String) | End Int
+
+@main = @std: Int, MainMsg -> Int: st, msg -> match msg
+  Start _ ->
+    w@ = @walker 0
+    w@ Go
+    s@ = @std
+    s@ (Write "walked")
+    self@ (End 0)
+    0
+  End code -> code
+  Line _ -> st
+  EndOfInput -> st

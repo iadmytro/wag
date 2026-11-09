@@ -1,0 +1,11 @@
+-- Spec §4.4 — pragma-attached @-declaration (arena_bytes)
+
+CounterMsg = Increment | Get (Actor ReplyMsg)
+ReplyMsg = CountIs Int
+
+@counter[arena_bytes = 1048576]
+@counter = Int, CounterMsg -> Int: state, msg -> match msg
+  Increment -> state + 1
+  Get replyTo ->
+    replyTo@ (CountIs (copy state))
+    state

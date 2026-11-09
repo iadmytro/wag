@@ -1,0 +1,23 @@
+-- Spec §8.18 (transcribed from wag-language-spec.md)
+-- ACTOR FIXTURE: excluded from the non-actor harness runs
+
+-- WorkerMsg's constructors (§3.1.1):
+WorkerMsg = Register (Actor LoggerMsg) | Crash
+
+-- LoggerMsg's constructors:
+LoggerMsg = WorkerUp (Actor WorkerMsg) | Down (Actor WorkerMsg)
+
+@worker = Unit, WorkerMsg -> Unit: st, msg -> match msg
+  Register logger ->
+    logger@ (WorkerUp self)   -- self: Actor WorkerMsg (§5.5.4)
+    st
+  Crash -> st                -- terminates via scheduler End arm (D081 v2)
+
+@logger = Unit, LoggerMsg -> Unit: st, msg -> match msg
+  WorkerUp w ->
+    -- Application decides what "handle it" means. A real program might:
+    --   s@ (Write ...)   -- log the event
+    st
+  Down w ->
+    -- Death notification (application-level; no built-in monitor in D078).
+    st

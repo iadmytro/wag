@@ -1,0 +1,22 @@
+-- test/lex.wag — representative tests for src/lex.wag (the lexer).
+--
+-- Runs via `wagc test examples/parser/test`; merged into src/lex.wag's namespace,
+-- which imports token .., so Tok / IntLit / Op / EOF resolve here.
+
+headTok = List Tok -> Tok: toks -> match toks.popFirst
+  (Some t, _) -> t
+  (None, _)   -> EOF
+
+isInt42 = Bool:  -> match (headTok (lex "42"))
+  (IntLit n) -> n == 42
+  _ -> False
+
+isOpPlus = Bool:  -> match (headTok (lex "+"))
+  (Op s) -> s == "+"
+  _ -> False
+
+test_main = Unit:  ->
+  -- An integer literal lexes to an IntLit carrying its value.
+  assert isInt42 "int literal lexes to IntLit 42"
+  -- A binary operator lexes to Op with its text preserved.
+  assert isOpPlus "operator lexes to Op +"

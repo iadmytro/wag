@@ -1,0 +1,3 @@
+-- Negative: consuming use of a borrowed value (without copy)
+-- `x` is &Int, returning it directly as Int is a type mismatch.
+bad = &Int -> Int: x -> x

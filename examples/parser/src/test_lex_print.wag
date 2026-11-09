@@ -1,0 +1,47 @@
+-- Debug: print tokens from lex "1 + 2 * 3"
+import
+  prelude
+    ..
+  lex
+    lex
+  token
+    ..
+
+MainMsg = Start (List String) | End Int
+
+@main = @std: Int, MainMsg -> Int: st, msg ->
+  match msg
+    Start argv ->
+      io@ = @std
+      toks = lex "1 + 2 * 3"
+      s = tokListStrH toks ""
+      io@ (Write s)
+      self@ (End 0)
+      0
+    End code ->
+      ()
+    @std.Line _ -> 0
+    @std.EndOfInput -> 0
+
+tokListStrH = List Tok, String -> String: xs, acc -> match xs.popFirst
+  (None, _)   -> acc
+  (Some t, r) -> tokListStrH r (acc + tokStr t + ",")
+
+tokStr = Tok -> String: t -> match t
+  IntLit n   -> "I" + show n
+  StrLit s   -> "S:" + s
+  Ident s    -> "V:" + s
+  Op s       -> "O:" + s
+  LParen     -> "("
+  RParen     -> ")"
+  LBracket   -> "["
+  RBracket   -> "]"
+  Comma      -> ","
+  Colon      -> ":"
+  Arrow      -> "->"
+  LeftArrow  -> "<-"
+  At         -> "@"
+  EOF        -> "EOF"
+  Newline n  -> "N:" + show n
+  Indent     -> "IND"
+  Dedent     -> "DED"

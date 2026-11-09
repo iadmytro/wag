@@ -1,0 +1,6 @@
+import
+  lib
+    double
+    add
+
+main = add (double 21) 1

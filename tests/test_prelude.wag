@@ -1,0 +1,8 @@
+-- Test prelude integration
+@main: Option Int, StdMsg -> Option (Option Int)
+@main st msg = do
+  let x = abs (-10)
+  let y = abs 10
+  if x == y
+    then Some (Some 10)
+    else None

@@ -1,0 +1,19 @@
+-- Eq typeclass: user-type instance with constructor-by-constructor match.
+-- testReport returns 0 iff all comparisons are correct.
+
+Color = Red | Green | Blue
+
+Eq Color =
+  (==) = Color, Color -> Bool: a b -> match (a, b)
+    (Red, Red) -> True
+    (Green, Green) -> True
+    (Blue, Blue) -> True
+    (_, _) -> False
+
+testReport = Int: ->
+  r1 = (Red == Red)
+  r2 = (Red == Green)
+  if r1 ->
+    if r2 -> 10
+      _   -> 0
+  _ -> 20

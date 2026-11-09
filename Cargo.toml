@@ -1,0 +1,23 @@
+[workspace]
+resolver = "2"
+members = [
+    "wag-syntax",
+    "wag-types",
+    "wag-interp",
+    "wag-check",
+    "wag-runtime",
+    "wag-cli",
+]
+default-members = ["wag-cli"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+
+[workspace.dependencies]
+chumsky = "=1.0.0-alpha.8"
+ariadne = "=0.5.1"
+toml = "=1.1.6"
+proptest = "1"
+criterion = "0.5"

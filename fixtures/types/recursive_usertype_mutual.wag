@@ -1,0 +1,6 @@
+-- Mutual recursion — rule 14 permits it (§7).
+-- Two user types referencing each other (Alpha ↔ Beta).
+Alpha = Alpha Beta
+Beta = Beta Alpha
+
+ok = x -> x

@@ -1,0 +1,31 @@
+-- Spec §8.14 (transcribed from wag-language-spec.md)
+-- ACTOR FIXTURE: excluded from the non-actor harness runs
+
+-- CounterMsg's constructors (§3.1.1):
+CounterMsg = Increment | Get (Actor ReplyMsg)
+-- ReplyMsg's constructor:
+ReplyMsg = CountIs Int
+
+@counter = Int, CounterMsg -> Int: state, msg -> match msg
+  Increment -> state + 1
+  Get replyTo ->
+    replyTo@ (CountIs (copy state))   -- replyTo: Actor ReplyMsg — freely shareable
+    state
+
+-- SupervisorMsg's constructors:
+SupervisorMsg = Boot | Bump | Shutdown
+-- SupervisorState's constructor:
+SupervisorState = SupervisorState (Actor CounterMsg)
+
+@supervisor = Option SupervisorState, SupervisorMsg -> Option SupervisorState: st, msg -> match msg
+  Boot ->
+    counter@ = @counter 0
+    Some (SupervisorState counter)
+  Bump -> match st
+    None -> None                           -- not booted yet; continue with state None
+    Some (SupervisorState c) ->
+      c@ Increment                              -- c: Actor CounterMsg, usable freely here
+      Some (SupervisorState c)
+  Shutdown -> match st
+    None -> None                           -- terminate; nothing spawned yet
+    Some (SupervisorState c) -> None       -- terminate; c's refcount drops → abandon

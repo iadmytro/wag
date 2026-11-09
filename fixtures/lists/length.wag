@@ -1,0 +1,27 @@
+-- Spec §8.4 (migrated to List, D062 cursor model): manual peek/step count —
+-- the handle carries an O(1) `len` field; this fixture keeps the walk shape
+-- of the original spec example and cross-checks it against the field.
+
+specLengthH = List Int, Int -> Int: lst, acc ->
+  match lst.peek
+    None   -> acc
+    Some _ ->
+      acc2 = acc + 1
+      match lst.step
+        None   -> acc2
+        Some t -> specLengthH t acc2
+
+specLength = List Int -> Int: lst -> specLengthH lst 0
+
+buildThree = List Int: ->
+  h0 = listNew
+  h1 = h0.append 3
+  h2 = h1.append -1
+  h3 = h2.append 4
+  h3
+
+-- (walked length, O(1) len field) over [3, -1, 4] → (3, 3).
+-- rule 10: `specLength` consumes its owned handle; the `.len` read borrows.
+testReport = (Int, Int): ->
+  xs = buildThree
+  (specLength (copy xs), xs.len)

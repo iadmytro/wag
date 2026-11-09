@@ -1,0 +1,5 @@
+name = "app"
+
+[deps]
+pkg_a = "../pkg_a"
+pkg_b = "../pkg_b"

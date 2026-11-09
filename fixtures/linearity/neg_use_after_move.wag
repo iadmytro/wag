@@ -1,0 +1,9 @@
+-- Rule 10 use-after-move at a call site (D065) — passing an owned handle
+-- to a consuming function moves it; reusing the binding afterwards is
+-- rejected with a two-span diagnostic (illegal site + consuming origin).
+-- (List form, item 8 batch 3: matching on handles is non-consuming per D058,
+-- so the old built-in-list "match twice" pattern no longer triggers rule 10.)
+
+bad = List Int -> Int: xs ->
+  ys = map (x -> x + 1) xs   -- consumes xs
+  ys.len + xs.len             -- use after move — rule 10

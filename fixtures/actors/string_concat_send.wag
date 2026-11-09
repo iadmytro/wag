@@ -1,0 +1,27 @@
+import
+  prelude
+    ..
+
+-- D081: string concat + send — actor echoes a concatenated string.
+-- Echoer shape: (Int, EchoMsg) -> Int. Main shape: (Int, MainMsg) -> Int.
+
+EchoMsg = Echo String
+
+@echoer = Int, EchoMsg -> Int: state, msg -> match msg
+  Echo s ->
+    self@ (Echo (stringConcat s " world"))
+    state
+
+MainMsg = Start (List String) | End Int
+
+@main = @std: Int, MainMsg -> Int: st, msg -> match msg
+  Start _ ->
+    e@ = @echoer 0
+    e@ (Echo "hello")
+    s@ = @std
+    s@ (Write "echoed")
+    self@ (End 0)
+    0
+  End code -> code
+  Line _ -> st
+  EndOfInput -> st

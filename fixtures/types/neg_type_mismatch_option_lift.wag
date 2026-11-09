@@ -1,0 +1,4 @@
+-- Genuinely different arm types — not Option-lifted
+bad = x -> if
+  x > 0 -> 1
+  _ -> True

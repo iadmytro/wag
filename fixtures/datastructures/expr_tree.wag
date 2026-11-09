@@ -1,0 +1,73 @@
+-- Expression tree: heterogeneous constructor payloads, deep pattern matching.
+-- Exercises sum types with 4 constructors, nested data, tail-recursive spine walks.
+
+Expr = Num Int | Add Expr Expr | Mul Expr Expr | Var String
+
+-- Walk the left spine (tail-recursive). Count nodes along it.
+leftSpineLen = &Expr, Int -> Int: e, acc -> match e
+  Num _   -> acc + 1
+  Var _   -> acc + 1
+  Add l _ -> leftSpineLen l (acc + 1)
+  Mul l _ -> leftSpineLen l (acc + 1)
+
+-- Walk the left spine; count how many are Num literals.
+leftNumCount = &Expr, Int -> Int: e, acc -> match e
+  Num _   -> acc + 1
+  Var _   -> acc
+  Add l _ -> leftNumCount l acc
+  Mul l _ -> leftNumCount l acc
+
+-- Walk the right spine (tail-recursive). Count nodes along it.
+rightSpineLen = &Expr, Int -> Int: e, acc -> match e
+  Num _   -> acc + 1
+  Var _   -> acc + 1
+  Add _ r -> rightSpineLen r (acc + 1)
+  Mul _ r -> rightSpineLen r (acc + 1)
+
+-- Classify the root constructor (exercises all 4 arms).
+rootKind = &Expr -> Int: e -> match e
+  Num _   -> 0
+  Var _   -> 1
+  Add _ _ -> 2
+  Mul _ _ -> 3
+
+-- Build: (x + 3) * (2 * x)
+buildSample = Expr: ->
+  vx1 = Var "x"
+  n3  = Num 3
+  add = Add vx1 n3
+  n2  = Num 2
+  vx2 = Var "x"
+  mul2 = Mul n2 vx2
+  Mul add mul2
+
+-- Build a left-leaning tree: (((1 + 2) + 3) + 4)
+buildLeftTree = Expr: ->
+  e0 = Add (Num 1) (Num 2)
+  e1 = Add e0 (Num 3)
+  Add e1 (Num 4)
+
+-- Build a right-leaning tree: 1 + (2 + (3 + 4))
+buildRightTree = Expr: ->
+  e2 = Add (Num 3) (Num 4)
+  e1 = Add (Num 2) e2
+  Add (Num 1) e1
+
+-- Build a mixed tree with all 4 constructor kinds at various depths.
+buildMixed = Expr: ->
+  v = Var "y"
+  n5 = Num 5
+  inner = Mul v n5
+  outer = Add inner (Num 10)
+  outer
+
+testReport = (Int, Int, Int, Int): ->
+  e = buildSample
+  lt = buildLeftTree
+  rt = buildRightTree
+  mx = buildMixed
+  -- sample left spine: Mul -> Add -> Var(x) = 3 nodes
+  -- left tree left spine: Add -> Add -> Add -> Num(1) = 4 nodes, 1 Num on spine
+  -- right tree right spine: Add -> Add -> Add -> Num(4) = 4 nodes
+  -- mixed root is Add = kind 2
+  (leftSpineLen e 0, leftNumCount lt 0, rightSpineLen rt 0, rootKind mx)

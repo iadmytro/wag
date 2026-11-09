@@ -1,0 +1,47 @@
+-- List comprehensions (§6.7.5): desugar to map/filter/fold/zip/flatMap + lambdas.
+-- Pure functions so the pipeline harness can drive them via `call_fn`.
+
+-- Map: square each element.
+squares = List Int -> List Int: xs -> [x <- xs | _ -> x * x]
+
+-- Filter: keep positive elements.
+positives = List Int -> List Int: xs -> [x <- xs | x > 0 -> x]
+
+-- Fold: sum all elements.
+sumComp = List Int -> Int: xs -> [x <- xs | acc = 0 | _ -> acc + x]
+
+-- Zip: element-wise sum of two lists (truncated to shortest).
+zipSum = List Int, List Int -> List Int: xs, ys -> [x, y <- xs, ys | _ -> x + y]
+
+-- Cartesian: all pairwise sums (flatMap).
+cartSum = List Int, List Int -> List Int: xs, ys -> [x <- xs, y <- ys | _ -> x + y]
+
+-- Filter + map: square positive elements only.
+sqPos = List Int -> List Int: xs -> [x <- xs | x > 0 -> x * x]
+
+-- Multiple guards: elements in range (0 < x < 100), doubled.
+inRange = List Int -> List Int: xs -> [x <- xs | x > 0, x < 100 -> x * 2]
+
+-- Zip 3-element: element-wise sum of three lists.
+zip3Sum = List Int, List Int, List Int -> List Int: xs, ys, zs -> [a, b, c <- xs, ys, zs | _ -> a + b + c]
+
+-- Zip with guard: keep only pairs where first element is positive.
+zipPos = List Int, List Int -> List Int: xs, ys -> [x, y <- xs, ys | x > 0 -> x + y]
+
+-- Cartesian with guard: pairwise products where sum > 10.
+cartProd = List Int, List Int -> List Int: xs, ys -> [x <- xs, y <- ys | x + y > 10 -> x * y]
+
+-- Cartesian 3 generators: all triple sums.
+tripleSum = List Int, List Int, List Int -> List Int: xs, ys, zs -> [a <- xs, b <- ys, c <- zs | _ -> a + b + c]
+
+-- Fold with guard: sum only elements > 5.
+sumBig = List Int -> Int: xs -> [x <- xs | acc = 0 | x > 5 -> acc + x]
+
+-- Fold + zip: dot product.
+dot = List Int, List Int -> Int: xs, ys -> [x, y <- xs, ys | acc = 0 | _ -> x * y + acc]
+
+-- Nested comprehension: for each x, produce list of x+y for all y.
+nested = List Int, List Int -> List (List Int): xs, ys -> [x <- xs | _ -> [y <- ys | _ -> x + y]]
+
+-- Comprehension returning constant (ignores generator).
+ones = List Int -> List Int: xs -> [x <- xs | _ -> 1]

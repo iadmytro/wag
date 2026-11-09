@@ -1,0 +1,4 @@
+export
+  triple
+
+triple = x -> x * 3

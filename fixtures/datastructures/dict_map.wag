@@ -1,0 +1,64 @@
+-- Ordered map as a binary search tree: single type variable, tail-recursive lookup.
+-- Exercises parametric types, Option returns, deep pattern matching on sums.
+
+Map = MEmpty | MNode left (Map T) key Int val T right (Map T)
+
+-- Tail-recursive lookup (single-path walk down the tree).
+mapLookup = &Map String, Int -> Option String: m, k -> match m
+  MEmpty       -> None
+  MNode l x v r -> if k == x -> Some v
+    _          -> if k < x -> mapLookup l k
+      _        -> mapLookup r k
+
+-- Count nodes in the left spine (tail-recursive).
+leftSpineCount = &Map String, Int -> Int: m, acc -> match m
+  MEmpty       -> acc
+  MNode l _ _ _ -> leftSpineCount l (acc + 1)
+
+-- Get the minimum key (walk left until empty, tail-recursive with accumulator).
+minKey = &Map String -> Option Int: m -> minKeyAcc m None
+
+minKeyAcc = &Map String, Option Int -> Option Int: m, best -> match m
+  MEmpty       -> best
+  MNode l x _ _ -> minKeyAcc l (Some x)
+
+-- Check if a key exists (tail-recursive).
+hasKey = &Map String, Int -> Bool: m, k -> match m
+  MEmpty       -> False
+  MNode l x _ r -> if k == x -> True
+    _          -> if k < x -> hasKey l k
+      _        -> hasKey r k
+
+-- Build a map with keys 1-4 (hardcoded tree structure).
+--        2
+--      /   \
+--     1     3
+--            \
+--             4
+buildMap = Map String: ->
+  n1 = MNode MEmpty 1 "one" MEmpty
+  n4 = MNode MEmpty 4 "four" MEmpty
+  n3 = MNode MEmpty 3 "three" n4
+  MNode n1 2 "two" n3
+
+-- Build a larger map with keys 1-5.
+--          3
+--        /   \
+--       2     4
+--      /       \
+--     1         5
+buildMap5 = Map String: ->
+  n1 = MNode MEmpty 1 "one" MEmpty
+  n2 = MNode n1 2 "two" MEmpty
+  n5 = MNode MEmpty 5 "five" MEmpty
+  n4 = MNode MEmpty 4 "four" n5
+  MNode n2 3 "three" n4
+
+testReport = (Option String, Option Int, Bool, Int): ->
+  m = buildMap
+  m5 = buildMap5
+  -- lookup key 3 in map: Some("three")
+  -- minKey of map5: Some(1)
+  -- hasKey 2 in map: true
+  -- leftSpineCount of map5: 2 (nodes 3, 2)
+  (mapLookup m 3, minKey m5, hasKey m 2, leftSpineCount m5 0)

@@ -1,0 +1,21 @@
+import
+  prelude
+    ..
+
+-- D081: main with @std I/O — echoes each input line until EOF.
+-- Main shape: (Int, MainMsg) -> Int.
+
+MainMsg = Start (List String) | End Int
+
+@main = @std: Int, MainMsg -> Int: st, msg -> match msg
+  Start _ ->
+    s@ = @std
+    s@ (RequestLine self)
+    0
+  Line chars ->
+    s@ = @std
+    s@ (Write chars)
+    s@ (RequestLine self)
+    st
+  End code -> code
+  EndOfInput -> st

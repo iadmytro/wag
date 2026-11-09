@@ -1,0 +1,38 @@
+import
+  prelude
+    ..
+
+-- D081: liveness cascade — A spawns B, B spawns C, C terminates.
+-- All actors: (Int, Msg) -> Int. Main: (Int, MainMsg) -> Int.
+
+AMsg = AGo
+@actorA = Int, AMsg -> Int: state, msg -> match msg
+  AGo ->
+    b@ = @actorB 0
+    b@ BGo
+    state
+
+BMsg = BGo
+@actorB = Int, BMsg -> Int: state, msg -> match msg
+  BGo ->
+    c@ = @actorC 0
+    c@ CGo
+    state
+
+CMsg = CGo
+@actorC = Int, CMsg -> Int: state, msg -> match msg
+  CGo -> state
+
+MainMsg = Start (List String) | End Int
+
+@main = @std: Int, MainMsg -> Int: st, msg -> match msg
+  Start _ ->
+    a@ = @actorA 0
+    a@ AGo
+    s@ = @std
+    s@ (Write "cascade")
+    self@ (End 0)
+    0
+  End code -> code
+  Line _ -> st
+  EndOfInput -> st

@@ -1,0 +1,21 @@
+-- Item-8 cutover: one-pass forward list building via O(1) tail `append`
+-- (List, D062 cursor model) replaces the old `.last` accessor idiom.
+
+buildThree = List Int:  -> 
+  a = listNew
+  b = a.append 1
+  c = b.append 2
+  c.append 3
+
+buildStrings = List (List Int):  -> 
+  h = listNew.append 72    -- "h"
+  i = listNew.append 105   -- "i"
+  o = listNew
+  p = o.append h
+  p.append i
+
+lastLength = List Int -> Int: xs -> 
+  a = listNew.append 10
+  b = a.append 20
+  c = b.append 30
+  c.len

@@ -1,0 +1,6 @@
+import
+  lib
+    foo
+
+foo = 42
+main = foo

@@ -1,0 +1,13 @@
+[package]
+name = "wag-interp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "WAG values, arena, trampoline, and function table"
+
+[dependencies]
+wag-syntax = { path = "../wag-syntax" }
+wag-types = { path = "../wag-types" }
+
+[dev-dependencies]
+wag-check = { path = "../wag-check" }

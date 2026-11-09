@@ -1,0 +1,28 @@
+-- Debug: does isDigit work?
+import
+  prelude
+    ..
+
+MainMsg = Start (List String) | End Int
+
+@main = @std: Int, MainMsg -> Int: st, msg ->
+  match msg
+    Start argv ->
+      io@ = @std
+      a = isDigit 49
+      b = isAlpha 65
+      c = isAlphaNum 97
+      s = "isDigit(49)=" + boolStr a
+      s2 = s + " isAlpha(65)=" + boolStr b
+      s3 = s2 + " isAlphaNum(97)=" + boolStr c
+      io@ (Write s3)
+      self@ (End 0)
+      0
+    End code ->
+      ()
+    @std.Line _ -> 0
+    @std.EndOfInput -> 0
+
+boolStr = Bool -> String: b -> if
+  b -> "true"
+  _ -> "false"

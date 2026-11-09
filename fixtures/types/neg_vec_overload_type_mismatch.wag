@@ -1,0 +1,4 @@
+-- D074 negative: map on Vec Int requires (Int -> Int); Bool return is a mismatch.
+badFn = x -> True
+v = vecFromList [1, 2, 3]
+result = map badFn v
