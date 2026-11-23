@@ -10,12 +10,11 @@ use crate::value::{Value, CTOR_ARRAY};
 use super::engine::{Engine, Env};
 
 impl<'p> Engine<'p> {
-    /// Extract the UTF-8 bytes of a `Str` value.
+    /// Extract the UTF-8 bytes of a `String` value (prelude constrained datatype).
     pub(super) fn string_bytes(&self, v: &Value) -> Result<Vec<u8>, VmError> {
-        match v {
-            Value::Str(s) => Ok(s.as_bytes().to_vec()),
-            other => Err(VmError::Panic(format!("expected String, got {other:?}"))),
-        }
+        let s = self.program.value_to_string(v)
+            .ok_or_else(|| VmError::Panic(format!("expected String, got {v:?}")))?;
+        Ok(s.into_bytes())
     }
 
     /// Non-consuming view of the element buffer of an `Array T` value.
@@ -26,13 +25,16 @@ impl<'p> Engine<'p> {
         }
     }
 
-    /// View a value as a vector of `Int` bytes (works on `Str` values).
+    /// View a value as a vector of `Int` bytes (works on `String` values).
     /// Used by `stringByteAt` to index into a `String`'s byte buffer.
     pub(super) fn vec_view(&self, v: &Value) -> Result<Vec<Value>, VmError> {
         match v {
             Value::Data(ctor, fields) if *ctor == CTOR_ARRAY => Ok(fields.clone()),
-            Value::Str(s) => Ok(s.as_bytes().iter().map(|b| Value::Int(*b as i64)).collect()),
-            other => Err(VmError::Panic(format!("expected Array/String, got {other:?}"))),
+            _ => {
+                let s = self.program.value_to_string(v)
+                    .ok_or_else(|| VmError::Panic(format!("expected Array/String, got {v:?}")))?;
+                Ok(s.bytes().map(|b| Value::Int(b as i64)).collect())
+            }
         }
     }
 
@@ -54,7 +56,7 @@ impl<'p> Engine<'p> {
     pub(super) fn build_vec_from_elems(&self, elems: Vec<Value>) -> Result<Value, VmError> {
         let vbuf_id = self.vec_vbuf_id();
         let some_id = self.opt_some_id();
-        let slots: Vec<Value> = elems.iter().map(|e| Value::Data(some_id, vec![e.clone()])).collect();
+        let slots: Vec<Value> = elems.iter().map(|e| Value::Data1(some_id, Box::new(e.clone()))).collect();
         let arr = Value::Data(CTOR_ARRAY, slots);
         let n = elems.len() as i64;
         Ok(Value::Data(vbuf_id, vec![arr, Value::Int(n), Value::Int(n)]))
@@ -82,6 +84,7 @@ impl<'p> Engine<'p> {
         for slot in slots.iter().take(len) {
             match slot {
                 Value::Data(c, fs) if *c == some_id && fs.len() == 1 => out.push(fs[0].clone()),
+                Value::Data1(c, f) if *c == some_id => out.push(f.as_ref().clone()),
                 _ => return Err(VmError::Panic("VBuf slot is not Some".into())),
             }
         }
@@ -234,9 +237,7 @@ pub(super) fn eval_binop(op: BinOp, lhs: &Value, rhs: &Value) -> Result<Value, V
                 (Value::Int(a), Value::Int(b)) => a == b,
                 (Value::Bool(a), Value::Bool(b)) => a == b,
                 (Value::Unit, Value::Unit) => true,
-                (Value::Char(a), Value::Char(b)) => a == b,
-                (Value::Str(a), Value::Str(b)) => a == b,
-                // Structural equality for composites (Option, pairs, user types, §3.5).
+                // Structural equality for composites (Char, String, Option, pairs, user types, §3.5).
                 _ => lhs == rhs,
             };
             Ok(Value::Bool(match op {

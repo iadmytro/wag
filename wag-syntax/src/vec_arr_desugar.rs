@@ -21,7 +21,7 @@ pub fn desugar_vec_arr_methods(program: &mut Program) {
             Item::Actor(a) => rewrite_expr(&mut a.body),
             Item::Method(m) => rewrite_expr(&mut m.body),
             Item::Constructor(_) => {}
-            Item::TypeAlias(_) | Item::ParametricType(_) => {}
+            Item::TypeAlias(_) | Item::ParametricType(_) | Item::ConstrainedDatatype(_) => {}
             Item::Class(_) | Item::Instance(_) => {}
         }
     }

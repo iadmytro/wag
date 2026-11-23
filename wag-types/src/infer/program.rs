@@ -171,6 +171,18 @@ fn infer_program_impl(program: &Program, ctx: &mut Context) -> Result<TypedProgr
         }
     }
 
+    // Register constrained datatypes: `Name = Sig: param -> body`.
+    // The Sig result must be `Name` or `Option Name`; the body is a `Bool` decider.
+    // Ctor registration happens here; body typechecking is deferred until after
+    // `infer_module` so the body can reference top-level functions (e.g. `isScalar`).
+    let mut constrained_bodies: Vec<&wag_syntax::ConstrainedDatatypeDecl> = Vec::new();
+    for item in &program.items {
+        if let Item::ConstrainedDatatype(cd) = item {
+            ctx.add_constrained_datatype(cd)?;
+            constrained_bodies.push(cd);
+        }
+    }
+
     // Eagerly validate all aliases: resolve each to detect cycles.
     for (name, ty) in &ctx.aliases {
         super::util::resolve_aliases(ty, &ctx.aliases, 0).map_err(|mut e| {
@@ -184,6 +196,26 @@ fn infer_program_impl(program: &Program, ctx: &mut Context) -> Result<TypedProgr
     expand_builtin_aliases(ctx)?;
 
     let (raw_bindings, mut actor_tys) = infer_module(&program.items, ctx)?;
+
+    // Typecheck constrained datatype bodies (after all top-level fns are in scope).
+    for cd in &constrained_bodies {
+        let sig_ty = super::util::surface_to_ty_resolved(&cd.sig, &ctx.aliases)?;
+        let (param_tys, _) = match &sig_ty {
+            Ty::Fun(ps, r) => (ps.clone(), (**r).clone()),
+            _ => unreachable!("add_constrained_datatype already validated"),
+        };
+        let saved = ctx.env.remove(&(cd.param.clone(), 0));
+        ctx.env.insert((cd.param.clone(), 0), Scheme::mono(param_tys[0].clone()));
+        let body_ty = ctx.infer_expr(&cd.body)?;
+        match saved {
+            Some(s) => { ctx.env.insert((cd.param.clone(), 0), s); }
+            None => { ctx.env.remove(&(cd.param.clone(), 0)); }
+        }
+        unify(&mut ctx.subst, &body_ty, &Ty::bool(), cd.span).map_err(|_| {
+            TypeError::new(Stage::Inference, cd.span, format!("constrained datatype `{}`: body must be Bool", cd.name))
+        })?;
+    }
+
     resolve_deferred_fields(ctx)?;
     finalize_expr_types(ctx);
     validate_closedness(ctx, &raw_bindings, &actor_tys)?;
@@ -828,6 +860,7 @@ fn infer_module(items: &[Item], ctx: &mut Context) -> Result<ModuleResults, Type
     let mut actors: Vec<&ActorDef> = Vec::new();
     let mut methods: Vec<&MethodDef> = Vec::new();
     let mut param_types: Vec<&wag_syntax::ParametricTypeDecl> = Vec::new();
+    let mut constrained_dts: Vec<&wag_syntax::ConstrainedDatatypeDecl> = Vec::new();
     let mut classes: Vec<&wag_syntax::ClassDecl> = Vec::new();
     let mut instances: Vec<&wag_syntax::InstanceDecl> = Vec::new();
     for item in items {
@@ -842,9 +875,16 @@ fn infer_module(items: &[Item], ctx: &mut Context) -> Result<ModuleResults, Type
             Item::Constructor(_) => {}
             Item::TypeAlias(_) => {}
             Item::ParametricType(pt) => param_types.push(pt),
+            Item::ConstrainedDatatype(cd) => constrained_dts.push(cd),
             Item::Class(c) => classes.push(c),
             Item::Instance(i) => instances.push(i),
         }
+    }
+
+    // Constrained datatypes: register the constructor (name = type name).
+    // Body typechecking is deferred until after all top-level fns are inferred.
+    for cd in &constrained_dts {
+        ctx.add_constrained_datatype(cd)?;
     }
 
     // Namespacing: top-level names are unique; actors occupy the `@`-prefixed
@@ -1181,6 +1221,25 @@ fn infer_module(items: &[Item], ctx: &mut Context) -> Result<ModuleResults, Type
     // Method bodies (D056/D057): single-step operations on the receiver handle.
     for m in &methods {
         ctx.infer_method(m)?;
+    }
+
+    // Typecheck constrained datatype bodies (after all top-level fns are in scope).
+    for cd in &constrained_dts {
+        let sig_ty = super::util::surface_to_ty_resolved(&cd.sig, &ctx.aliases)?;
+        let (param_tys, _) = match &sig_ty {
+            Ty::Fun(ps, r) => (ps.clone(), (**r).clone()),
+            _ => unreachable!("add_constrained_datatype already validated"),
+        };
+        let saved = ctx.env.remove(&(cd.param.clone(), 0));
+        ctx.env.insert((cd.param.clone(), 0), Scheme::mono(param_tys[0].clone()));
+        let body_ty = ctx.infer_expr(&cd.body)?;
+        match saved {
+            Some(s) => { ctx.env.insert((cd.param.clone(), 0), s); }
+            None => { ctx.env.remove(&(cd.param.clone(), 0)); }
+        }
+        unify(&mut ctx.subst, &body_ty, &Ty::bool(), cd.span).map_err(|_| {
+            TypeError::new(Stage::Inference, cd.span, format!("constrained datatype `{}`: body must be Bool", cd.name))
+        })?;
     }
 
     // Freeze results: return schemes (preserving quantified type vars).

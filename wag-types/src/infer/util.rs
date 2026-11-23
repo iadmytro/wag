@@ -9,6 +9,8 @@ use crate::types::Ty;
 use crate::unify::Subst;
 
 /// Types that support `==`/`!=` (both sides must be the same one of these).
+/// Built-in comparable types are hardcoded. User datatypes require an `Eq`
+/// instance (typeclass) — checked separately, not here.
 pub(super) fn is_comparable(ty: &Ty) -> bool {
     match ty {
         Ty::Con(n) => matches!(n.as_str(), "Int" | "Bool" | "Unit" | "String" | "Char"),
@@ -18,9 +20,9 @@ pub(super) fn is_comparable(ty: &Ty) -> bool {
 
 pub(super) fn is_likely_pointer_free(ty: &Ty) -> bool {
     match ty {
-        // `Char` is a codepoint — pointer-free (inline, like Int). `Vector a` is
-        // arena-resident and non-pointer-free (handled by the `Ty::App` arm below,
-        // which excludes it from the PF constructor list).
+        // `Char` is a codepoint (prelude constrained datatype over `Int`) —
+        // pointer-free (inline, like Int). `String` is a `Vec Int` buffer —
+        // NOT pointer-free (heap-resident).
         Ty::Con(n) => matches!(n.as_str(), "Int" | "Bool" | "Unit" | "Char"),
         Ty::App(n, args) => {
             matches!(
@@ -507,5 +509,73 @@ mod tests {
         // declaration table, so `MyPair Int` must pass through untouched.
         let t = surface_to_ty(&app("MyPair", &["Int"])).expect("user head passes through");
         assert!(matches!(t, Ty::App(ref h, _) if h == "MyPair"));
+    }
+
+    // -- is_comparable --------------------------------------------------------
+
+    #[test]
+    fn is_comparable_builtin_types() {
+        for n in ["Int", "Bool", "Unit", "String", "Char"] {
+            assert!(is_comparable(&Ty::Con(n.into())), "{n} should be comparable");
+        }
+    }
+
+    #[test]
+    fn is_comparable_rejects_non_builtin() {
+        assert!(!is_comparable(&Ty::Con("MyType".into())));
+        assert!(!is_comparable(&Ty::App("Option".into(), vec![Ty::Con("Int".into())])));
+        assert!(!is_comparable(&Ty::App("Actor".into(), vec![Ty::Con("Int".into())])));
+        assert!(!is_comparable(&Ty::App("List".into(), vec![Ty::Con("Int".into())])));
+        assert!(!is_comparable(&Ty::App("Vec".into(), vec![Ty::Con("Int".into())])));
+        assert!(!is_comparable(&Ty::Fun(vec![Ty::Con("Int".into())], Box::new(Ty::Con("Int".into())))));
+        assert!(!is_comparable(&Ty::Var(0)));
+    }
+
+    // -- is_likely_pointer_free -----------------------------------------------
+
+    #[test]
+    fn is_likely_pointer_free_scalar_types() {
+        for n in ["Int", "Bool", "Unit", "Char"] {
+            assert!(is_likely_pointer_free(&Ty::Con(n.into())), "{n} should be pointer-free");
+        }
+    }
+
+    #[test]
+    fn is_likely_pointer_free_string_is_not() {
+        // String is a Vec Int buffer — heap-resident, NOT pointer-free.
+        assert!(!is_likely_pointer_free(&Ty::Con("String".into())));
+    }
+
+    #[test]
+    fn is_likely_pointer_free_composite() {
+        // Actor/Pair/Triple are pointer-free iff all args are.
+        let actor_int = Ty::App("Actor".into(), vec![Ty::Con("Int".into())]);
+        assert!(is_likely_pointer_free(&actor_int));
+        let pair_int_bool = Ty::App("Pair".into(), vec![Ty::Con("Int".into()), Ty::Con("Bool".into())]);
+        assert!(is_likely_pointer_free(&pair_int_bool));
+        // Pair with a String arg is NOT pointer-free.
+        let pair_int_str = Ty::App("Pair".into(), vec![Ty::Con("Int".into()), Ty::Con("String".into())]);
+        assert!(!is_likely_pointer_free(&pair_int_str));
+    }
+
+    #[test]
+    fn is_likely_pointer_free_borrow_and_fun() {
+        let borrow_int = Ty::Borrow(Box::new(Ty::Con("Int".into())));
+        assert!(is_likely_pointer_free(&borrow_int));
+        let fun = Ty::Fun(vec![Ty::Con("Int".into())], Box::new(Ty::Con("Int".into())));
+        assert!(is_likely_pointer_free(&fun));
+    }
+
+    #[test]
+    fn is_likely_pointer_free_var_and_bound_are_not() {
+        assert!(!is_likely_pointer_free(&Ty::Var(0)));
+        assert!(!is_likely_pointer_free(&Ty::Bound(0)));
+    }
+
+    #[test]
+    fn is_likely_pointer_free_user_ctor_app_is_not() {
+        // CtorApp is conservatively non-pointer-free.
+        let t = Ty::CtorApp(0, vec![Ty::Con("Int".into())]);
+        assert!(!is_likely_pointer_free(&t));
     }
 }

@@ -507,7 +507,7 @@ pub(crate) fn spawn_actor_inner(
                     } else {
                         vec![payload]
                     };
-                    let msg = Value::Data(ctor.id, fields);
+                    let msg = Value::data_value(ctor.id, fields);
                     enqueue_msg(inner, ActorId(0), id, msg)?;
                 }
                 None => {

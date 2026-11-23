@@ -413,12 +413,19 @@ fn skip_atom(
     match &tokens[*i].value {
         Token::Ident(_)
         | Token::UpperIdent(_)
-        | Token::IntLit(_)
         | Token::Wildcard
         | Token::SelfKw => {
             out.push(tokens[*i].clone());
             bump_emitted(stack);
             *i += 1;
+        }
+        // Literal scrutinees are intentionally disabled: `match 3` / `match "hi"`
+        // have no useful pattern space. Bind the value to a name first.
+        Token::IntLit(_) | Token::StringLit(_) => {
+            return Err(LayoutError {
+                span: tokens[*i].span,
+                message: "literal scrutinees are not supported; bind the value to a name first".into(),
+            });
         }
         Token::At => {
             out.push(tokens[*i].clone());
@@ -620,6 +627,29 @@ mod tests {
                 Token::Ident("xs".into()),
                 Token::VirtualLBrace,
             ]
+        );
+    }
+
+    /// Literal scrutinees are intentionally disabled: `match 3` / `match "hi"`
+    /// have no useful pattern space. The layout pass rejects them with a
+    /// targeted message.
+    #[test]
+    fn match_literal_scrutinee_rejected() {
+        let src = "match 3\n  _ -> 0\n";
+        let err = lex_with_layout(src).unwrap_err();
+        assert!(
+            err.contains("literal scrutinees are not supported"),
+            "expected literal-scrutinee error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn match_string_literal_scrutinee_rejected() {
+        let src = "match \"hi\"\n  _ -> 0\n";
+        let err = lex_with_layout(src).unwrap_err();
+        assert!(
+            err.contains("literal scrutinees are not supported"),
+            "expected literal-scrutinee error, got: {err}"
         );
     }
 

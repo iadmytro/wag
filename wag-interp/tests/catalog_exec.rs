@@ -57,7 +57,7 @@ fn opt_none(prog: &wag_interp::LoadedProgram) -> Value {
 
 /// Build a `Some(v)` value.
 fn opt_some(prog: &wag_interp::LoadedProgram, v: Value) -> Value {
-    Value::Data(prog.opt_some_id(), vec![v])
+    Value::Data1(prog.opt_some_id(), Box::new(v))
 }
 
 /// Deref an Option-typed value to its payload (`None` → `None`).
@@ -69,6 +69,7 @@ fn opt_inner(prog: &wag_interp::LoadedProgram, v: &Value) -> Option<Value> {
         Value::Data(ctor, fields) if *ctor == some_id && !fields.is_empty() => {
             Some(fields[0].clone())
         }
+        Value::Data1(ctor, f) if *ctor == some_id => Some(f.as_ref().clone()),
         other => panic!("expected Option, got {other:?}"),
     }
 }
@@ -89,6 +90,12 @@ fn assert_some_int(prog: &wag_interp::LoadedProgram, v: &Value, n: i64) {
         Value::Int(x) if *x == n => {}
         Value::Data(ctor, fields) if *ctor == some_id && !fields.is_empty() => {
             match &fields[0] {
+                Value::Int(x) if *x == n => {}
+                other => panic!("expected Int {n} or Some({n}), got Some({other:?})"),
+            }
+        }
+        Value::Data1(ctor, f) if *ctor == some_id => {
+            match f.as_ref() {
                 Value::Int(x) if *x == n => {}
                 other => panic!("expected Int {n} or Some({n}), got Some({other:?})"),
             }
@@ -594,12 +601,12 @@ fn m5_string_len_ascii() {
 }
 
 #[test]
-fn m5_string_len_utf8_bytes() {
+fn m5_string_len_utf8_codepoints() {
     let prog = str_prog();
     let mut e = Engine::new(&prog);
-    // "hé" = 'h' (1 byte) + 'é' (2 bytes) = 3 bytes.
+    // "hé" = 'h' + 'é' = 2 codepoints (D089: stringLen counts codepoints).
     let v = e.call_name("lenUtf8", vec![]).unwrap();
-    assert!(matches!(v, Value::Int(3)), "got {v:?}");
+    assert!(matches!(v, Value::Int(2)), "got {v:?}");
 }
 
 #[test]
@@ -721,9 +728,9 @@ fn assert_deep(e: &mut Engine, name: &str, expected: Value) {
 fn m5_string_get_codepoint() {
     let prog = char_prog();
     let mut e = Engine::new(&prog);
-    let exp_first = opt_some(&prog, Value::Char(104));
+    let exp_first = opt_some(&prog, prog.make_char(104));
     assert_deep(&mut e, "first", exp_first);
-    let exp_second = opt_some(&prog, Value::Char(233));
+    let exp_second = opt_some(&prog, prog.make_char(233));
     assert_deep(&mut e, "second", exp_second);
 }
 
@@ -750,7 +757,7 @@ fn m5_string_byte_index() {
 fn m5_codepoint_to_char() {
     let prog = char_prog();
     let mut e = Engine::new(&prog);
-    let exp_cpH = opt_some(&prog, Value::Char(104));
+    let exp_cpH = opt_some(&prog, prog.make_char(104));
     assert_deep(&mut e, "cpH", exp_cpH);
     // 55296 (0xD800) is a surrogate — invalid scalar value -> None.
     let exp_cpBad = opt_none(&prog);

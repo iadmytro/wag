@@ -151,7 +151,7 @@ impl<'p> Engine<'p> {
                         // Fast path: var not reused in arm bodies → move out of env.
                         // Data values are expensive to clone (recursive), so we
                         // prefer moving them. Small inline values are cheap either way.
-                        let is_data = matches!(env.get(name), Some(Value::Data(..)));
+                        let is_data = matches!(env.get(name), Some(Value::Data(..) | Value::Data1(..)));
                         if is_data && !arms.iter().any(|a| {
                             !pat_binds(name, &a.pattern) && var_appears_in(name, &a.body)
                         }) {
@@ -230,8 +230,8 @@ impl<'p> Engine<'p> {
             Expr::Int { value, .. } => Ok(Value::Int(*value)),
             Expr::Unit { .. } => Ok(Value::Unit),
             Expr::Str { value, .. } => {
-                // Owned UTF-8 string (§3.10).
-                Ok(Value::Str(value.clone()))
+                // Owned UTF-8 string (§3.10) — prelude constrained datatype.
+                Ok(self.program.make_string(value))
             }
             Expr::Var { name, .. } => {
                 if let Some(v) = env.get(name) {
@@ -334,7 +334,7 @@ impl<'p> Engine<'p> {
                     if let Expr::Var { name, .. } = scrutinee {
                         // Fast path: var is a Data value (expensive to clone) AND
                         // not reused in arm bodies → move out directly.
-                        let is_data = matches!(env.get(name), Some(Value::Data(..)));
+                        let is_data = matches!(env.get(name), Some(Value::Data(..) | Value::Data1(..)));
                         if is_data && !arms.iter().any(|a| {
                             !pat_binds(name, &a.pattern) && var_appears_in(name, &a.body)
                         }) {
@@ -488,7 +488,8 @@ impl<'p> Engine<'p> {
             return Ok(None);
         };
         let (ctor, fields) = match v {
-            Value::Data(ctor, fields) => (*ctor, fields),
+            Value::Data(ctor, fields) => (*ctor, fields.as_slice()),
+            Value::Data1(ctor, field) => (*ctor, std::slice::from_ref(field.as_ref())),
             _ => return Ok(None),
         };
         let entry = self.program.get_ctor(ctor);
@@ -552,6 +553,7 @@ impl<'p> Engine<'p> {
 
         let (ctor, mut fields) = match v {
             Value::Data(ctor, fields) => (ctor, fields),
+            Value::Data1(ctor, field) => (ctor, vec![*field]),
             other => return Err(format!("region write: expected Data, got {other:?}")),
         };
         if path.len() == 1 {
@@ -561,7 +563,11 @@ impl<'p> Engine<'p> {
             }
             let mut new_fields = fields;
             new_fields[idx] = val;
-            Ok(Value::Data(ctor, new_fields))
+            if new_fields.len() == 1 {
+                Ok(Value::Data1(ctor, Box::new(new_fields.into_iter().next().unwrap())))
+            } else {
+                Ok(Value::Data(ctor, new_fields))
+            }
         } else {
             let idx = path[0];
             if idx >= fields.len() {
@@ -571,7 +577,11 @@ impl<'p> Engine<'p> {
             let new_child = Self::rebuild_path(child, &path[1..], val)?;
             let mut new_fields = fields;
             new_fields.insert(idx, new_child);
-            Ok(Value::Data(ctor, new_fields))
+            if new_fields.len() == 1 {
+                Ok(Value::Data1(ctor, Box::new(new_fields.into_iter().next().unwrap())))
+            } else {
+                Ok(Value::Data(ctor, new_fields))
+            }
         }
     }
 
@@ -612,13 +622,18 @@ impl<'p> Engine<'p> {
     ) -> Result<Value, VmError> {
         let (ctor, mut fields) = match recv_val {
             Value::Data(ctor, fields) => (ctor, fields),
+            Value::Data1(ctor, field) => (ctor, vec![*field]),
             other => return Err(VmError::Panic(format!(
                 "set-field: receiver must be a Data value, got {other:?}"
             ))),
         };
         if field_idx < fields.len() {
             fields[field_idx] = new_val;
-            Ok(Value::Data(ctor, fields))
+            if fields.len() == 1 {
+                Ok(Value::Data1(ctor, Box::new(fields.into_iter().next().unwrap())))
+            } else {
+                Ok(Value::Data(ctor, fields))
+            }
         } else {
             Err(VmError::Panic("set-field: field index out of bounds".into()))
         }
@@ -628,7 +643,8 @@ impl<'p> Engine<'p> {
 
 /// True if the value is small/cheap to clone (no benefit to moving).
 pub(super) fn is_pointer_free(v: &Value) -> bool {
-    matches!(v, Value::Int(_) | Value::Char(_) | Value::Bool(_) | Value::Unit | Value::Fn(_))
+    matches!(v, Value::Int(_) | Value::Bool(_) | Value::Unit | Value::Fn(_))
+        || matches!(v, Value::Data1(_, inner) if is_pointer_free(inner))
 }
 
 /// Does a pattern bind `name` (recursively through ctor/product sub-patterns)?

@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use wag_syntax::{ConstructorDecl, ParametricTypeDecl, Span};
+use wag_syntax::{ConstrainedDatatypeDecl, ConstructorDecl, ParametricTypeDecl, Span};
 
 use crate::error::{Stage, TypeError};
 use crate::types::{CtorInfo, FieldInfo, Scheme, Ty};
@@ -190,5 +190,193 @@ impl Context {
         }
 
         Ok(())
+    }
+
+    /// Register a constrained datatype: `Name = Sig: param -> body`.
+    ///
+    /// The Sig must be a function type whose result is `Name` or `Option Name`.
+    /// The constructor shares the type name (anonymous name-sharing ctor).
+    /// The body is a `Bool` decider; the VM derives `Some`/`None` from it.
+    pub(super) fn add_constrained_datatype(&mut self, cd: &ConstrainedDatatypeDecl) -> Result<(), TypeError> {
+        let sig_ty = surface_to_ty_resolved(&cd.sig, &self.aliases)?;
+        // Extract params and result from the function type.
+        let (param_tys, ret_ty) = match &sig_ty {
+            Ty::Fun(ps, r) => (ps.clone(), (**r).clone()),
+            _ => {
+                return Err(TypeError::new(
+                    Stage::Namespacing,
+                    cd.span,
+                    format!("constrained datatype `{}`: signature must be a function type", cd.name),
+                ));
+            }
+        };
+        // Enforce: result must be `Name` or `Option Name`.
+        let is_valid_result = match &ret_ty {
+            Ty::Con(n) => n == &cd.name,
+            Ty::App(name, args) => {
+                name == "Option" && args.len() == 1 && match &args[0] {
+                    Ty::Con(n) => n == &cd.name,
+                    _ => false,
+                }
+            }
+            _ => false,
+        };
+        if !is_valid_result {
+            return Err(TypeError::new(
+                Stage::Namespacing,
+                cd.span,
+                format!(
+                    "constrained datatype `{}`: result type must be `{}` or `Option {}`",
+                    cd.name, cd.name, cd.name
+                ),
+            ));
+        }
+        // Build field infos from the sig params.
+        let field_tys: Vec<FieldInfo> = param_tys
+            .iter()
+            .map(|ty| FieldInfo {
+                label: None,
+                ty: ty.clone(),
+            })
+            .collect();
+        let scheme = Scheme::mono(sig_ty);
+        // Register the constructor (name = type name, anonymous name-sharing).
+        self.ctors.insert(
+            cd.name.clone(),
+            CtorInfo {
+                name: cd.name.clone(),
+                type_name: cd.name.clone(),
+                fields: field_tys,
+                n_params: 0,
+                scheme: scheme.clone(),
+            },
+        );
+        self.type_ctors
+            .entry(cd.name.clone())
+            .or_default()
+            .push(cd.name.clone());
+        self.env.insert((cd.name.clone(), param_tys.len()), scheme);
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::context::Context;
+    use wag_syntax::{ConstrainedDatatypeDecl, Expr, Span, Type};
+
+    fn span() -> Span {
+        Span::new(0, 10)
+    }
+
+    fn true_expr() -> Expr {
+        Expr::Upper { name: "True".into(), span: span() }
+    }
+
+    /// `Int -> Option Name`
+    fn sig_option(name: &str) -> Type {
+        Type::Func(
+            vec![Type::Name("Int".into())],
+            Box::new(Type::App(
+                Box::new(Type::Name("Option".into())),
+                vec![Type::Name(name.into())],
+            )),
+        )
+    }
+
+    /// `Int -> Name` (total)
+    fn sig_total(name: &str) -> Type {
+        Type::Func(
+            vec![Type::Name("Int".into())],
+            Box::new(Type::Name(name.into())),
+        )
+    }
+
+    /// `Int -> Int` (wrong result type)
+    fn sig_wrong_result() -> Type {
+        Type::Func(
+            vec![Type::Name("Int".into())],
+            Box::new(Type::Name("Int".into())),
+        )
+    }
+
+    /// `Int` (not a function type)
+    fn sig_not_func() -> Type {
+        Type::Name("Int".into())
+    }
+
+    fn cd(name: &str, sig: Type) -> ConstrainedDatatypeDecl {
+        ConstrainedDatatypeDecl {
+            name: name.into(),
+            sig,
+            param: "x".into(),
+            body: true_expr(),
+            span: span(),
+        }
+    }
+
+    #[test]
+    fn constrained_datatype_option_result_ok() {
+        let mut ctx = Context::new();
+        ctx.add_constrained_datatype(&cd("Char", sig_option("Char")))
+            .expect("Int -> Option Char should be accepted");
+        // Ctor registered under the type name.
+        assert!(ctx.ctors.contains_key("Char"));
+        // Scheme in env: ("Char", 1) → Int -> Option Char
+        assert!(ctx.env.contains_key(&("Char".to_string(), 1)));
+    }
+
+    #[test]
+    fn constrained_datatype_total_result_ok() {
+        let mut ctx = Context::new();
+        ctx.add_constrained_datatype(&cd("Foo", sig_total("Foo")))
+            .expect("Int -> Foo should be accepted (total)");
+        assert!(ctx.ctors.contains_key("Foo"));
+    }
+
+    #[test]
+    fn constrained_datatype_wrong_result_rejected() {
+        let mut ctx = Context::new();
+        let err = ctx
+            .add_constrained_datatype(&cd("Foo", sig_wrong_result()))
+            .expect_err("Int -> Int should be rejected");
+        assert!(
+            err.to_string().contains("result type must be"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn constrained_datatype_non_function_sig_rejected() {
+        let mut ctx = Context::new();
+        let err = ctx
+            .add_constrained_datatype(&cd("Foo", sig_not_func()))
+            .expect_err("non-function sig should be rejected");
+        assert!(
+            err.to_string().contains("must be a function type"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn constrained_datatype_result_must_match_name() {
+        // `Int -> Option Bar` when the datatype is named `Foo` → rejected.
+        let mut ctx = Context::new();
+        let err = ctx
+            .add_constrained_datatype(&cd("Foo", sig_option("Bar")))
+            .expect_err("result name must match datatype name");
+        assert!(
+            err.to_string().contains("result type must be"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn constrained_datatype_registers_type_ctors() {
+        let mut ctx = Context::new();
+        ctx.add_constrained_datatype(&cd("Char", sig_option("Char"))).unwrap();
+        // The type's ctor list should contain the ctor name.
+        let ctors = ctx.type_ctors.get("Char").expect("Char should have ctors");
+        assert_eq!(ctors, &vec!["Char".to_string()]);
     }
 }

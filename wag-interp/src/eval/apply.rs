@@ -184,7 +184,7 @@ impl<'p> Engine<'p> {
                         }
                     }
                     let s: String = codepoints.iter().filter_map(|&c| char::from_u32(c)).collect();
-                    return Ok(Value::Str(s));
+                    return Ok(self.program.make_string(&s));
                 }
                 // ---- Char bridge + string indexing (§3.10 / §3.11) ----
                 "stringGet" => {
@@ -200,7 +200,7 @@ impl<'p> Engine<'p> {
                     let str = std::str::from_utf8(&bytes)
                         .map_err(|e| VmError::Panic(format!("invalid UTF-8 in string: {e}")))?;
                     return match str.chars().nth(idx as usize) {
-                        Some(ch) => Ok(Value::Data(self.opt_some_id(), vec![Value::Char(ch as u32)])),
+                        Some(ch) => Ok(Value::Data1(self.opt_some_id(), Box::new(self.program.make_char(ch as u32)))),
                         None => Ok(Value::Data(self.opt_none_id(), vec![])),
                     };
                 }
@@ -212,15 +212,24 @@ impl<'p> Engine<'p> {
                         ));
                     }
                     let v = self.eval_value(&args[0], env)?;
-                    let c = match v {
-                        Value::Char(c) => c,
-                        other => {
-                            return Err(VmError::Panic(format!(
-                                "charToCodepoint expects Char, got {other:?}"
-                            )))
-                        }
+                    let char_id = self.program.char_ctor_id()
+                        .ok_or_else(|| VmError::Panic("Char ctor not in program".into()))?;
+                    let Value::Data1(cid, inner) = &v else {
+                        return Err(VmError::Panic(format!(
+                            "charToCodepoint expects Char, got {v:?}"
+                        )))
                     };
-                    return Ok(Value::Int(c as i64));
+                    if *cid != char_id {
+                        return Err(VmError::Panic(format!(
+                            "charToCodepoint expects Char, got {v:?}"
+                        )));
+                    }
+                    let Value::Int(c) = inner.as_ref() else {
+                        return Err(VmError::Panic(format!(
+                            "charToCodepoint: Char inner is not Int, got {v:?}"
+                        )));
+                    };
+                    return Ok(Value::Int(*c));
                 }
                 "codepointToChar" => {
                     if args.len() != 1 {
@@ -238,7 +247,7 @@ impl<'p> Engine<'p> {
                         }
                     };
                     return match char::from_u32(n as u32) {
-                        Some(ch) => Ok(Value::Data(self.opt_some_id(), vec![Value::Char(ch as u32)])),
+                        Some(ch) => Ok(Value::Data1(self.opt_some_id(), Box::new(self.program.make_char(ch as u32)))),
                         None => Ok(Value::Data(self.opt_none_id(), vec![])),
                     };
                 }
@@ -284,7 +293,7 @@ impl<'p> Engine<'p> {
                     }
                     let slots = self.arr_slots(&a)?;
                     return match slots.get(idx as usize) {
-                        Some(e) => Ok(Value::Data(self.opt_some_id(), vec![e.clone()])),
+                        Some(e) => Ok(Value::Data1(self.opt_some_id(), Box::new(e.clone()))),
                         None => Ok(Value::Data(self.opt_none_id(), vec![])),
                     };
                 }
@@ -339,7 +348,7 @@ impl<'p> Engine<'p> {
                     }
                     let slots = self.vec_view(&v)?;
                     return match slots.get(idx as usize) {
-                        Some(e) => Ok(Value::Data(self.opt_some_id(), vec![e.clone()])),
+                        Some(e) => Ok(Value::Data1(self.opt_some_id(), Box::new(e.clone()))),
                         None => Ok(Value::Data(self.opt_none_id(), vec![])),
                     };
                 }
@@ -354,7 +363,7 @@ impl<'p> Engine<'p> {
                         }
                     }
                     let s = String::from_utf8_lossy(&bytes).into_owned();
-                    return Ok(Value::Str(s));
+                    return Ok(self.program.make_string(&s));
                 }
                 // ---- Tier-2 primitives (S4, §9) ----
                 "nowMs" => {
@@ -395,7 +404,7 @@ impl<'p> Engine<'p> {
                     let name = std::str::from_utf8(&bytes)
                         .map_err(|e| VmError::Panic(format!("envGet: invalid UTF-8: {e}")))?;
                     return match std::env::var(name) {
-                        Ok(val) => Ok(Value::Data(self.opt_some_id(), vec![Value::Str(val)])),
+                        Ok(val) => Ok(Value::Data1(self.opt_some_id(), Box::new(self.program.make_string(&val)))),
                         Err(_) => Ok(Value::Data(self.opt_none_id(), vec![])),
                     };
                 }
@@ -432,7 +441,7 @@ impl<'p> Engine<'p> {
                     return match std::fs::File::open(path) {
                         Ok(f) => {
                             let idx = file_registry_insert(f);
-                            Ok(Value::Data(self.opt_some_id(), vec![Value::Int(idx as i64)]))
+                            Ok(Value::Data1(self.opt_some_id(), Box::new(Value::Int(idx as i64))))
                         }
                         Err(_) => Ok(Value::Data(self.opt_none_id(), vec![])),
                     };
@@ -448,7 +457,7 @@ impl<'p> Engine<'p> {
                     return match std::fs::File::create(path) {
                         Ok(f) => {
                             let idx = file_registry_insert(f);
-                            Ok(Value::Data(self.opt_some_id(), vec![Value::Int(idx as i64)]))
+                            Ok(Value::Data1(self.opt_some_id(), Box::new(Value::Int(idx as i64))))
                         }
                         Err(_) => Ok(Value::Data(self.opt_none_id(), vec![])),
                     };
@@ -504,7 +513,7 @@ impl<'p> Engine<'p> {
                                         .map(|&b| Value::Int(b as i64))
                                         .collect();
                                     let lst = self.build_list_from_elems(elems)?;
-                                    Ok(Value::Data(self.opt_some_id(), vec![lst]))
+                                    Ok(Value::Data1(self.opt_some_id(), Box::new(lst)))
                                 }
                                 Err(e) => {
                                     Err(VmError::Panic(format!("fileRead: read failed: {e}")))

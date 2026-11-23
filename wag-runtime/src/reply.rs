@@ -56,7 +56,7 @@ pub fn list_to_string(program: &LoadedProgram, v: &Value) -> Result<String, VmEr
 /// `Chunk text` — raw `@SysStd` reply (prelude-declared on `SysStdReply`).
 pub fn make_chunk(program: &LoadedProgram, line: &str) -> Result<Value, VmError> {
     let ctor = reply_ctor(program, "Chunk")?;
-    build_data(program, ctor, vec![Value::Str(line.to_string())])
+    build_data(program, ctor, vec![program.make_string(line)])
 }
 
 /// Nullary `StdEnd` — raw `@SysStd` reply (prelude-declared on `SysStdReply`).
@@ -69,13 +69,13 @@ pub fn make_end(program: &LoadedProgram) -> Result<Value, VmError> {
 pub fn make_file_data(program: &LoadedProgram, bytes: &[u8]) -> Result<Value, VmError> {
     let ctor = reply_ctor(program, "FileData")?;
     let s = String::from_utf8_lossy(bytes).into_owned();
-    build_data(program, ctor, vec![Value::Str(s)])
+    build_data(program, ctor, vec![program.make_string(&s)])
 }
 
 /// `FileErr msg` — raw `@SysFile` file-read error reply (prelude-declared on `SysFileReply`, D082).
 pub fn make_file_err(program: &LoadedProgram, msg: &str) -> Result<Value, VmError> {
     let ctor = reply_ctor(program, "FileErr")?;
-    build_data(program, ctor, vec![Value::Str(msg.to_string())])
+    build_data(program, ctor, vec![program.make_string(msg)])
 }
 
 /// `NetData bytes` — raw `@SysConn` reply (built-in on `SysNetReply`).
@@ -117,7 +117,7 @@ fn build_data(
             fields.len()
         )));
     }
-    Ok(Value::Data(ctor, fields))
+    Ok(Value::data_value(ctor, fields))
 }
 
 #[cfg(test)]
@@ -142,7 +142,7 @@ mod tests {
         );
         let (_p, _t, loaded) = wag_interp::prepare(&src).unwrap();
         let chunk = make_chunk(&loaded, "hi").unwrap();
-        assert!(matches!(&chunk, Value::Data(c, f) if *c == *loaded.ctor_by_name.get("Chunk").unwrap() && f.len() == 1));
+        assert!(matches!(&chunk, Value::Data1(c, _) if *c == *loaded.ctor_by_name.get("Chunk").unwrap()));
 
         let end = make_end(&loaded).unwrap();
         assert!(matches!(&end, Value::Data(c, f) if *c == *loaded.ctor_by_name.get("StdEnd").unwrap() && f.is_empty()));

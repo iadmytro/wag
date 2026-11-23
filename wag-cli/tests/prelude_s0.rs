@@ -152,11 +152,9 @@ fn int_of(v: &Value) -> i64 {
     }
 }
 
-fn str_of(v: &Value) -> String {
-    let Value::Str(s) = v else {
-        panic!("expected Str value, got {v:?}");
-    };
-    s.clone()
+fn str_of(e: &wag_interp::Engine, v: &Value) -> String {
+    e.program.value_to_string(v)
+        .unwrap_or_else(|| panic!("expected String value, got {v:?}"))
 }
 
 /// True if `v` is a `None`.
@@ -169,6 +167,11 @@ fn opt_inner(e: &wag_interp::Engine, v: &Value) -> Option<Value> {
     if let Value::Data(c, fields) = v {
         if *c == e.program.opt_some_id() && fields.len() == 1 {
             return Some(fields[0].clone());
+        }
+    }
+    if let Value::Data1(c, f) = v {
+        if *c == e.program.opt_some_id() {
+            return Some(f.as_ref().clone());
         }
     }
     None
@@ -717,13 +720,13 @@ s123 = show 123
     let r9 = e.call_name("s9", vec![]).unwrap();
     let r10 = e.call_name("s10", vec![]).unwrap();
     let r123 = e.call_name("s123", vec![]).unwrap();
-    assert_eq!(str_of(&r0), "0");
-    assert_eq!(str_of(&r42), "42");
-    assert_eq!(str_of(&r_neg), "-42");
-    assert_eq!(str_of(&r1), "1");
-    assert_eq!(str_of(&r9), "9");
-    assert_eq!(str_of(&r10), "10");
-    assert_eq!(str_of(&r123), "123");
+    assert_eq!(str_of(&e, &r0), "0");
+    assert_eq!(str_of(&e, &r42), "42");
+    assert_eq!(str_of(&e, &r_neg), "-42");
+    assert_eq!(str_of(&e, &r1), "1");
+    assert_eq!(str_of(&e, &r9), "9");
+    assert_eq!(str_of(&e, &r10), "10");
+    assert_eq!(str_of(&e, &r123), "123");
 }
 
 #[test]
@@ -1033,7 +1036,7 @@ fn d074_string_concat() {
     let loaded = loaded_with_prelude(src);
     let mut e = Engine::new(&loaded);
     let v = e.call_name("s", vec![]).unwrap();
-    assert_eq!(str_of(&v), "abcd");
+    assert_eq!(str_of(&e, &v), "abcd");
 }
 
 /// D074: `bitNot` on Int (named replacement for the removed Int overload of `!`).
@@ -1068,4 +1071,38 @@ result = map double [1, 2, 3]
     let mut e = Engine::new(&loaded);
     let v = e.call_name("result", vec![]).unwrap();
     assert_eq!(list_ints(&e, &v), vec![2, 4, 6]);
+}
+
+/// `vecSlice` clamps lo/hi to [0, len] and returns the sub-range as a fresh Vec.
+#[test]
+fn prelude_vec_slice() {
+    let src = "
+v1 = vecFromList [10, 20, 30, 40, 50]
+v2 = vecFromList [10, 20, 30, 40, 50]
+v3 = vecFromList [10, 20, 30, 40, 50]
+v4 = vecFromList [10, 20, 30, 40, 50]
+v5 = vecFromList [10, 20, 30, 40, 50]
+s1 = vecSlice v1 1 3
+s2 = vecSlice v2 0 2
+s3 = vecSlice v3 3 5
+s4 = vecSlice v4 4 2
+s5 = vecSlice v5 0 99
+r1 = vecToList s1
+r2 = vecToList s2
+r3 = vecToList s3
+r4 = vecToList s4
+r5 = vecToList s5
+";
+    let loaded = loaded_with_prelude(src);
+    let mut e = Engine::new(&loaded);
+    let r1 = e.call_name("r1", vec![]).unwrap();
+    let r2 = e.call_name("r2", vec![]).unwrap();
+    let r3 = e.call_name("r3", vec![]).unwrap();
+    let r4 = e.call_name("r4", vec![]).unwrap();
+    let r5 = e.call_name("r5", vec![]).unwrap();
+    assert_eq!(list_ints(&e, &r1), vec![20, 30]);
+    assert_eq!(list_ints(&e, &r2), vec![10, 20]);
+    assert_eq!(list_ints(&e, &r3), vec![40, 50]);
+    assert_eq!(list_ints(&e, &r4), vec![]);
+    assert_eq!(list_ints(&e, &r5), vec![10, 20, 30, 40, 50]);
 }

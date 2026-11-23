@@ -266,6 +266,8 @@ pub enum Item {
     TypeAlias(TypeAliasDecl),
     /// `UpperIdent type_vars` + constructor block — parametric user type.
     ParametricType(ParametricTypeDecl),
+    /// `Name = Sig: param -> body` — constrained datatype (anonymous ctor).
+    ConstrainedDatatype(ConstrainedDatatypeDecl),
     /// Method on a region-resident type (D056/D057): `TypeName.name = ...`.
     Method(MethodDef),
     /// Typeclass declaration (D075): `Name C₁ … Cₙ = m₁ : sig₁ / …`.
@@ -396,6 +398,22 @@ pub struct ParametricTypeDecl {
     pub type_vars: Vec<String>,
     /// Constructors belonging to this type.
     pub ctors: Vec<ConstructorDecl>,
+    pub span: Span,
+}
+
+/// `Name = Sig: param -> body` — constrained datatype (anonymous name-sharing
+/// constructor). The constructor is partial: the body is a `Bool` decider;
+/// the VM packages the args into `Some(Data1(...))` if true, `None` if false.
+/// The result type of `Sig` must be `Name` or `Option Name`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConstrainedDatatypeDecl {
+    pub name: String,
+    /// Function type, e.g. `Int -> Option Char`.
+    pub sig: Type,
+    /// Parameter name (e.g. `"cp"`).
+    pub param: String,
+    /// Decider body (must typecheck as `Bool`).
+    pub body: Expr,
     pub span: Span,
 }
 

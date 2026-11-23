@@ -26,6 +26,7 @@ pub fn lift_lambdas(program: &mut Program) {
             Item::Method(m) => m.dotted_name(),
             Item::TypeAlias(a) => a.name.clone(),
             Item::ParametricType(p) => p.name.clone(),
+            Item::ConstrainedDatatype(c) => c.name.clone(),
             Item::Class(c) => c.name.clone(),
             Item::Instance(i) => i.class_name.clone(),
         })
@@ -40,7 +41,7 @@ pub fn lift_lambdas(program: &mut Program) {
             Item::Actor(a) => lift_in_expr(&mut a.body, &mut counter, &mut synthetics, &mut top_names),
             Item::Method(m) => lift_in_expr(&mut m.body, &mut counter, &mut synthetics, &mut top_names),
             Item::Constructor(_) => {}
-            Item::TypeAlias(_) | Item::ParametricType(_) => {}
+            Item::TypeAlias(_) | Item::ParametricType(_) | Item::ConstrainedDatatype(_) => {}
             Item::Class(_) | Item::Instance(_) => {}
         }
     }

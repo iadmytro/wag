@@ -263,6 +263,7 @@ pub fn compile_multi_module(
                                     Item::Constructor(_) => {}
                                     Item::TypeAlias(a) => names.push(a.name.clone()),
                                     Item::ParametricType(p) => names.push(p.name.clone()),
+                                    Item::ConstrainedDatatype(c) => names.push(c.name.clone()),
                                     // Methods (D056) are not top-level exportable names.
                                     Item::Method(_) => {}
                                     Item::Class(c) => names.push(c.name.clone()),

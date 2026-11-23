@@ -43,6 +43,16 @@ Option =
   Some val T
   | None
 
+-- ─── Char: Unicode scalar value (constrained datatype) ──────────────────────
+-- isScalar: total predicate — true iff cp is a valid Unicode scalar value
+-- (0..=0x10FFFF, excluding surrogate range 0xD800..=0xDFFF).
+isScalar = Int -> Bool: cp -> (cp >= 0) & (cp <= 0x10FFFF) & ((cp < 0xD800) | (cp > 0xDFFF))
+
+Char = Int -> Option Char: cp -> isScalar cp
+
+-- ─── String: valid UTF-8 byte sequence (constrained datatype) ───────────────
+String = Vec Int -> Option String: b -> validUtf8 b
+
 -- Links never cross call boundaries (D056/D057): there are no top-level
 -- functions taking `Ref T`. Read head/len by field access on the handle —
 -- field paths auto-deref through Ref (`h.head`, `h.len`). Mutation happens
@@ -387,6 +397,12 @@ rangeLoop = Int, Int, List Int -> List Int: lo, hi, acc ->
 -- (O(n), rare) → amortized O(1), exactly like Rust's `Vec`.
 Vec = VBuf buf (Arr (Option T)) len Int cap Int
 
+-- Byte buffer alias
+Bytes = (Vec U8)
+
+-- Codepoint buffer alias
+Codepoints = (Vec Char)
+
 -- Empty vector: zero-length, zero-capacity buffer.
 vecEmpty = Vec T: -> VBuf (arrNew 0) 0 0
 
@@ -452,6 +468,75 @@ vecFromListLoop = List T, Vec T, Int -> Vec T: l, v, i ->
     (Some x, l2) ->
       match v
         VBuf buf len cap -> vecFromListLoop l2 (VBuf (arrSet buf (copy i) (Some x)) (i + 1) cap) (i + 1)
+
+-- Clamp `x` into `[lo, hi]`.
+clampInt = Int, Int, Int -> Int: x, lo, hi ->
+  if x < lo -> lo
+     x > hi -> hi
+     _      -> x
+
+-- Slice a vector over the element range `[lo, hi)` (D089). Out-of-range bounds
+-- clamp to `[0, vecLen]`; `lo >= hi` yields an empty vector. Total — never fails.
+-- `take (<= 0)` yields empty, so no explicit guard is needed.
+vecSlice = Vec T, Int, Int -> Vec T: v, lo, hi ->
+  loC = clampInt lo 0 (vecLen v)
+  hiC = clampInt hi 0 (vecLen v)
+  vecFromList (take (hiC - loC) (drop loC (vecToList v)))
+
+-- ─── UTF-8 validation (for String constrained datatype) ─────────────────────
+
+-- True iff the byte list is a valid UTF-8 sequence.
+validUtf8List = List Int -> Bool: bs -> match bs.popFirst
+  (None, _) -> True
+  (Some b, rest) -> validUtf8Step b rest
+
+-- Classify the lead byte and validate the corresponding sequence.
+validUtf8Step = Int, List Int -> Bool: b, rest ->
+  if b < 0x80 -> validUtf8List rest
+     (b >= 0xC2) & (b <= 0xDF) -> validUtf8Cont 1 rest
+     b == 0xE0 -> validUtf8E0 rest
+     (b >= 0xE1) & (b <= 0xEF) -> validUtf8Cont 2 rest
+     b == 0xF0 -> validUtf8F0 rest
+     (b >= 0xF1) & (b <= 0xF3) -> validUtf8Cont 3 rest
+     b == 0xF4 -> validUtf8F4 rest
+     _ -> False
+
+-- Consume n continuation bytes (0x80-0xBF), then the rest must be valid UTF-8.
+validUtf8Cont = Int, List Int -> Bool: n, bs ->
+  if n == 0 -> validUtf8List bs
+     _ -> match bs.popFirst
+       (None, _) -> False
+       (Some b, rest) ->
+         isCont = (b >= 0x80) & (b <= 0xBF)
+         if isCont -> validUtf8Cont (n - 1) rest
+         _ -> False
+
+-- E0: next byte must be 0xA0-0xBF (reject overlong 0x80-0x9F).
+validUtf8E0 = List Int -> Bool: bs -> match bs.popFirst
+  (None, _) -> False
+  (Some b, rest) ->
+    ok = (b >= 0xA0) & (b <= 0xBF)
+    if ok -> validUtf8Cont 1 rest
+    _ -> False
+
+-- F0: next byte must be 0x90-0xBF (reject overlong 0x80-0x8F).
+validUtf8F0 = List Int -> Bool: bs -> match bs.popFirst
+  (None, _) -> False
+  (Some b, rest) ->
+    ok = (b >= 0x90) & (b <= 0xBF)
+    if ok -> validUtf8Cont 2 rest
+    _ -> False
+
+-- F4: next byte must be 0x80-0x8F (reject codepoints > 0x10FFFF).
+validUtf8F4 = List Int -> Bool: bs -> match bs.popFirst
+  (None, _) -> False
+  (Some b, rest) ->
+    ok = (b >= 0x80) & (b <= 0x8F)
+    if ok -> validUtf8Cont 2 rest
+    _ -> False
+
+-- UTF-8 validation over a byte vector.
+validUtf8 = Vec Int -> Bool: b -> validUtf8List (vecToList b)
 
 -- ─── Add typeclass (D075, §3.12) ────────────────────────────────────────────
 -- `(+)` is resolved through class instances; native Int/Bool arithmetic stays
@@ -524,8 +609,9 @@ strToByteList = &String -> List Int: s -> vecToList (stringToBytes s)
 -- String from a byte list (List Int → Vec Int bridge).
 byteListToStr = List Int -> String: l -> bytesToString (vecFromList l)
 
--- String length in bytes.
-stringLen = &String -> Int: s -> vecLen (stringToBytes s)
+-- String length in bytes; now consistent with stringGet,
+-- so `stringGet s (stringLen s - 1)` is the last character for any string).
+stringLen = &String -> Int: s -> vecLen (stringToCodepoints s)
 
 -- Concatenate two strings: copy a's bytes, then append b's bytes (O(n)).
 stringConcat = String, String -> String: a, b -> byteListToStr (strConcatLoop (strToByteList a) (strToByteList b) listNew)

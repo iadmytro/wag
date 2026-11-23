@@ -101,12 +101,10 @@ fn lex_render(input: &str) -> String {
         .unwrap_or_else(|e| panic!("compile lexer: {e}"));
     let mut e = Engine::new(compiled.loaded());
     let v = e
-        .call_name("lexRender", vec![Value::Str(input.to_string())])
+        .call_name("lexRender", vec![e.program.make_string(input)])
         .unwrap_or_else(|e| panic!("call lexRender: {e}"));
-    match v {
-        Value::Str(s) => s,
-        other => panic!("lexRender returned non-Str: {}", other.brief_desc()),
-    }
+    e.program.value_to_string(&v)
+        .unwrap_or_else(|| panic!("lexRender returned non-String: {}", v.brief_desc()))
 }
 
 #[test]

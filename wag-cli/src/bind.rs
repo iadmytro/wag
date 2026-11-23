@@ -258,6 +258,9 @@ fn collect_local_names(program: &Program) -> BTreeSet<String> {
             wag_syntax::Item::ParametricType(p) => {
                 names.insert(p.name.clone());
             }
+            wag_syntax::Item::ConstrainedDatatype(c) => {
+                names.insert(c.name.clone());
+            }
             // Methods (D056) are not top-level names — they live in the
             // dotted namespace of their receiver type.
             wag_syntax::Item::Method(_) => {}
@@ -296,6 +299,7 @@ pub fn check_cross_module_collisions(
                 wag_syntax::Item::Actor(a) => (format!("@{}", a.name), 0),
                 wag_syntax::Item::TypeAlias(a) => (a.name.clone(), 0),
                 wag_syntax::Item::ParametricType(p) => (p.name.clone(), 0),
+                wag_syntax::Item::ConstrainedDatatype(c) => (c.name.clone(), 0),
                 // Methods (D056) are not top-level names — skip collision checking.
                 wag_syntax::Item::Method(_) => continue,
                 wag_syntax::Item::Class(c) => (c.name.clone(), 0),
@@ -306,6 +310,7 @@ pub fn check_cross_module_collisions(
                 wag_syntax::Item::Constructor(c) => c.span,
                 wag_syntax::Item::TypeAlias(a) => a.span,
                 wag_syntax::Item::ParametricType(p) => p.span,
+                wag_syntax::Item::ConstrainedDatatype(c) => c.span,
                 wag_syntax::Item::Actor(a) => a.span,
                 wag_syntax::Item::Method(m) => m.span,
                 wag_syntax::Item::Class(c) => c.span,

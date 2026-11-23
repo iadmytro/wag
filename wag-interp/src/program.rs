@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use wag_syntax::{ActorDef, BinOp, Expr, FuncDef, IfArm, Item, MatchArm, Program, Span};
 use wag_types::{Ty, TypedProgram};
 
-use crate::value::{ConstructorId, FnId};
+use crate::value::{ConstructorId, FnId, Value, CTOR_ARRAY};
 
 /// One entry in the flat function table.
 #[derive(Clone, Debug)]
@@ -91,6 +91,9 @@ pub struct CtorEntry {
     /// Field names in declaration order — used for bare receiver-field reads
     /// in method bodies (D056) and write-path resolution.
     pub field_names: Vec<String>,
+    /// When set, this ctor has a `Bool` decider body: the VM evaluates it
+    /// before construction. True → `Some(Data1(…))`, False → `None`.
+    pub constrained_body: Option<FnId>,
 }
 
 /// Fully loaded, executable module.
@@ -147,6 +150,56 @@ impl LoadedProgram {
     /// `None` constructor ID (prelude-declared, D088).
     pub fn opt_none_id(&self) -> ConstructorId {
         *self.ctor_by_name.get("None").expect("None ctor not in program")
+    }
+
+    /// `Char` constructor ID (prelude constrained datatype).
+    pub fn char_ctor_id(&self) -> Option<ConstructorId> {
+        self.ctor_by_name.get("Char").copied()
+    }
+
+    /// `String` constructor ID (prelude constrained datatype).
+    pub fn str_ctor_id(&self) -> Option<ConstructorId> {
+        self.ctor_by_name.get("String").copied()
+    }
+
+    /// Build a `Char` value: `Data1(Char_ctor, Int(codepoint))`.
+    pub fn make_char(&self, cp: u32) -> Value {
+        let id = self.char_ctor_id().expect("Char ctor not in program");
+        Value::Data1(id, Box::new(Value::Int(cp as i64)))
+    }
+
+    /// Build a `String` value: `Data1(String_ctor, Vec Int bytes)`.
+    pub fn make_string(&self, s: &str) -> Value {
+        let str_id = self.str_ctor_id().expect("String ctor not in program");
+        let vbuf_id = self.ctor_by_name.get("VBuf").expect("VBuf ctor not in program");
+        let some_id = self.opt_some_id();
+        let slots: Vec<Value> = s.bytes()
+            .map(|b| Value::Data1(some_id, Box::new(Value::Int(b as i64))))
+            .collect();
+        let arr = Value::Data(CTOR_ARRAY, slots);
+        let n = s.len() as i64;
+        let vec_val = Value::Data(*vbuf_id, vec![arr, Value::Int(n), Value::Int(n)]);
+        Value::Data1(str_id, Box::new(vec_val))
+    }
+
+    /// Extract a `String` from a `Value` (inverse of [`Self::make_string`]).
+    pub fn value_to_string(&self, v: &Value) -> Option<String> {
+        let str_id = self.str_ctor_id()?;
+        let vbuf_id = *self.ctor_by_name.get("VBuf")?;
+        let some_id = self.opt_some_id();
+        let Value::Data1(id, inner) = v else { return None };
+        if *id != str_id { return None; }
+        let Value::Data(cid, fields) = inner.as_ref() else { return None };
+        if *cid != vbuf_id { return None; }
+        let Value::Data(CTOR_ARRAY, slots) = &fields[0] else { return None };
+        let mut bytes = Vec::with_capacity(slots.len());
+        for slot in slots {
+            let Value::Data1(sid, b) = slot else { return None };
+            if *sid != some_id { return None; }
+            let Value::Int(n) = b.as_ref() else { return None };
+            bytes.push(*n as u8);
+        }
+        String::from_utf8(bytes).ok()
     }
 
     /// Dev-only invariant: the name→id maps must agree with the Vec tables they index.
@@ -951,12 +1004,21 @@ pub fn load(program: &Program, typed: &TypedProgram) -> LoadedProgram {
     let mut ctor_by_name = HashMap::new();
 
     // Built-ins first (stable ids). One-off inline table.
+    // String/Char/Some/None/VBuf are always available so that string literals
+    // and `assert` work even in programs that do not import the prelude.
+    // When the prelude IS imported, the constrained-body loop links the decider
+    // to the existing entry (overwriting `constrained_body: None`).
     let builtins: &[(&str, &str, usize, CtorKind)] = &[
         ("True", "Bool", 0, CtorKind::True),
         ("False", "Bool", 0, CtorKind::False),
         ("Unit", "Unit", 0, CtorKind::Unit),
         ("Pair", "Pair", 2, CtorKind::Pair),
         ("Triple", "Triple", 3, CtorKind::Triple),
+        ("Some", "Option", 1, CtorKind::User),
+        ("None", "Option", 0, CtorKind::User),
+        ("Char", "Char", 1, CtorKind::User),
+        ("String", "String", 1, CtorKind::User),
+        ("VBuf", "Vec", 3, CtorKind::User),
     ];
 
     for (name, tname, arity, kind) in builtins {
@@ -972,15 +1034,12 @@ pub fn load(program: &Program, typed: &TypedProgram) -> LoadedProgram {
             field_is_ref: vec![],
             resident: false,
             field_names: vec![],
+            constrained_body: None,
         });
     }
 
     // User constructors from typed table.
     for (name, info) in &typed.constructors {
-        if ctor_by_name.contains_key(name) {
-            continue;
-        }
-        let id = ConstructorId(ctors.len() as u32);
         // A1b: VM metadata is derived once in wag-types — read the tables,
         // never declaration-space field types.
         let pf = typed.pointer_free_types.get(&info.type_name).copied().unwrap_or(false);
@@ -989,6 +1048,22 @@ pub fn load(program: &Program, typed: &TypedProgram) -> LoadedProgram {
             .get(name)
             .map(|m| m.field_is_ref.clone())
             .unwrap_or_default();
+        let field_names: Vec<String> = info
+            .fields
+            .iter()
+            .map(|f| f.label.clone().unwrap_or_default())
+            .collect();
+        if let Some(&id) = ctor_by_name.get(name) {
+            // Already registered (builtin): refresh metadata so field access
+            // and pointer-free tracking see the typed-table values.
+            let idx = id.0 as usize;
+            ctors[idx].pointer_free = pf;
+            ctors[idx].field_is_ref = field_is_ref;
+            ctors[idx].field_names = field_names;
+            ctors[idx].resident = typed.residency.get(&info.type_name) == Some(&true);
+            continue;
+        }
+        let id = ConstructorId(ctors.len() as u32);
         ctor_by_name.insert(name.clone(), id);
         ctors.push(CtorEntry {
             name: name.clone(),
@@ -999,12 +1074,39 @@ pub fn load(program: &Program, typed: &TypedProgram) -> LoadedProgram {
             kind: CtorKind::User,
             field_is_ref,
             resident: typed.residency.get(&info.type_name) == Some(&true),
-            field_names: info
-                .fields
-                .iter()
-                .map(|f| f.label.clone().unwrap_or_default())
-                .collect(),
+            field_names,
+            constrained_body: None,
         });
+    }
+
+    // Constrained datatypes: register the decider body as a function and link
+    // it to the ctor entry. The VM evaluates the body (Bool) before construction.
+    for item in &program.items {
+        if let Item::ConstrainedDatatype(cd) = item {
+            let body_fn_id = FnId(functions.len() as u32);
+            let (param_tys, _result_ty) = match &cd.sig {
+                wag_syntax::Type::Func(params, _ret) => {
+                    let pty: Vec<Ty> = params.iter().filter_map(|p| wag_types::surface_to_ty(p).ok()).collect();
+                    (pty, Ty::bool())
+                }
+                _ => (vec![Ty::int()], Ty::bool()),
+            };
+            let param_linear: Vec<bool> = param_tys.iter().map(ty_is_linear).collect();
+            functions.push(FnEntry {
+                name: format!("__constrained_{}", cd.name),
+                params: vec![cd.param.clone()],
+                param_tys,
+                param_linear,
+                body: cd.body.clone(),
+                result_ty: Ty::bool(),
+                recv_moved: false,
+            });
+            // Link the body to the ctor entry.
+            if let Some(ctor_id) = ctor_by_name.get(&cd.name) {
+                let idx = ctor_id.0 as usize;
+                ctors[idx].constrained_body = Some(body_fn_id);
+            }
+        }
     }
 
     // Methods (D056/D057): loaded as ordinary fn-table entries named
@@ -1234,3 +1336,144 @@ pub fn load(program: &Program, typed: &TypedProgram) -> LoadedProgram {
 }
 
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+    use crate::value::{CTOR_ARRAY, ConstructorId, Value};
+
+    /// Minimal program with the ctors the Char/String helpers need.
+    fn test_program() -> LoadedProgram {
+        let ctors = vec![
+            CtorEntry { name: "Some".into(), id: ConstructorId(0), type_name: "Option".into(), arity: 1, pointer_free: false, kind: CtorKind::User, field_is_ref: vec![], resident: false, field_names: vec![], constrained_body: None },
+            CtorEntry { name: "None".into(), id: ConstructorId(1), type_name: "Option".into(), arity: 0, pointer_free: true, kind: CtorKind::User, field_is_ref: vec![], resident: false, field_names: vec![], constrained_body: None },
+            CtorEntry { name: "Char".into(), id: ConstructorId(2), type_name: "Char".into(), arity: 1, pointer_free: true, kind: CtorKind::User, field_is_ref: vec![], resident: false, field_names: vec![], constrained_body: None },
+            CtorEntry { name: "String".into(), id: ConstructorId(3), type_name: "String".into(), arity: 1, pointer_free: false, kind: CtorKind::User, field_is_ref: vec![], resident: false, field_names: vec![], constrained_body: None },
+            CtorEntry { name: "VBuf".into(), id: ConstructorId(4), type_name: "Vec".into(), arity: 3, pointer_free: false, kind: CtorKind::User, field_is_ref: vec![], resident: false, field_names: vec![], constrained_body: None },
+        ];
+        let ctor_by_name: HashMap<String, ConstructorId> = ctors.iter().map(|c| (c.name.clone(), c.id)).collect();
+        LoadedProgram {
+            functions: vec![],
+            fn_by_name: HashMap::new(),
+            fn_overloads: HashMap::new(),
+            ctors,
+            ctor_by_name,
+            method_fns: HashMap::new(),
+            actors: HashMap::new(),
+            cell_reuse: false,
+        }
+    }
+
+    // -- char_ctor_id / str_ctor_id ------------------------------------------
+
+    #[test]
+    fn ctor_id_lookups() {
+        let p = test_program();
+        assert_eq!(p.char_ctor_id(), Some(ConstructorId(2)));
+        assert_eq!(p.str_ctor_id(), Some(ConstructorId(3)));
+        assert_eq!(p.opt_some_id(), ConstructorId(0));
+        assert_eq!(p.opt_none_id(), ConstructorId(1));
+    }
+
+    // -- make_char -----------------------------------------------------------
+
+    #[test]
+    fn make_char_produces_data1() {
+        let p = test_program();
+        let v = p.make_char(104);
+        assert!(matches!(v, Value::Data1(c, f) if c == ConstructorId(2) && *f == Value::Int(104)));
+    }
+
+    #[test]
+    fn make_char_max_codepoint() {
+        let p = test_program();
+        let v = p.make_char(0x10FFFF);
+        assert!(matches!(v, Value::Data1(_, f) if *f == Value::Int(0x10FFFF)));
+    }
+
+    // -- make_string / value_to_string roundtrip ------------------------------
+
+    #[test]
+    fn string_roundtrip_ascii() {
+        let p = test_program();
+        let v = p.make_string("hello");
+        assert_eq!(p.value_to_string(&v), Some("hello".to_string()));
+    }
+
+    #[test]
+    fn string_roundtrip_multibyte_utf8() {
+        let p = test_program();
+        let v = p.make_string("hé");
+        assert_eq!(p.value_to_string(&v), Some("hé".to_string()));
+    }
+
+    #[test]
+    fn string_roundtrip_empty() {
+        let p = test_program();
+        let v = p.make_string("");
+        assert_eq!(p.value_to_string(&v), Some(String::new()));
+    }
+
+    #[test]
+    fn string_roundtrip_emoji() {
+        let p = test_program();
+        let v = p.make_string("a\u{1F600}b");
+        assert_eq!(p.value_to_string(&v), Some("a\u{1F600}b".to_string()));
+    }
+
+    // -- value_to_string on non-String values --------------------------------
+
+    #[test]
+    fn value_to_string_rejects_int() {
+        let p = test_program();
+        assert_eq!(p.value_to_string(&Value::Int(42)), None);
+    }
+
+    #[test]
+    fn value_to_string_rejects_char() {
+        let p = test_program();
+        let v = p.make_char(104);
+        assert_eq!(p.value_to_string(&v), None);
+    }
+
+    #[test]
+    fn value_to_string_rejects_bool() {
+        let p = test_program();
+        assert_eq!(p.value_to_string(&Value::Bool(true)), None);
+    }
+
+    #[test]
+    fn value_to_string_rejects_unit() {
+        let p = test_program();
+        assert_eq!(p.value_to_string(&Value::Unit), None);
+    }
+
+    // -- make_string structure ------------------------------------------------
+
+    #[test]
+    fn make_string_is_data1_wrapping_vbuf() {
+        let p = test_program();
+        let v = p.make_string("ab");
+        // Outer: Data1(String_ctor, VBuf)
+        let Value::Data1(str_id, inner) = &v else {
+            panic!("expected Data1, got {:?}", v.brief_desc());
+        };
+        assert_eq!(*str_id, ConstructorId(3));
+        // Inner: Data(VBuf, [Array, len, cap])
+        let Value::Data(vbuf_id, fields) = inner.as_ref() else {
+            panic!("expected VBuf Data, got {:?}", inner.brief_desc());
+        };
+        assert_eq!(*vbuf_id, ConstructorId(4));
+        assert_eq!(fields.len(), 3);
+        // Array of 2 Some(Int) slots
+        let Value::Data(ctor, slots) = &fields[0] else {
+            panic!("expected Array, got {:?}", fields[0].brief_desc());
+        };
+        assert_eq!(*ctor, CTOR_ARRAY);
+        assert_eq!(slots.len(), 2);
+        // len and cap are both 2
+        assert_eq!(fields[1], Value::Int(2));
+        assert_eq!(fields[2], Value::Int(2));
+    }
+}

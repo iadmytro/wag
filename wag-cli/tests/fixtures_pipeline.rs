@@ -466,7 +466,7 @@ fn m10_positive_pure_functions() {
         let c = compile_inline(&src, Some(&prelude_src())).unwrap();
         let mut e = Engine::new(c.loaded());
         assert!(matches!(e.call_name("lenHello", vec![]).unwrap(), Value::Int(5)));
-        assert!(matches!(e.call_name("lenUtf8", vec![]).unwrap(), Value::Int(3)));
+        assert!(matches!(e.call_name("lenUtf8", vec![]).unwrap(), Value::Int(2)));
         assert!(matches!(e.call_name("concatLen", vec![]).unwrap(), Value::Int(4)));
         assert!(matches!(e.call_name("eqSame", vec![]).unwrap(), Value::Bool(true)));
         assert!(matches!(e.call_name("eqDiff", vec![]).unwrap(), Value::Bool(false)));
@@ -492,9 +492,9 @@ fn m10_positive_pure_functions() {
         let src = with_deps("strings/char_string_index.wag");
         let c = compile_inline(&src, Some(&prelude_src())).unwrap();
         let mut e = Engine::new(c.loaded());
-        let exp = opt_some(&e, Value::Char(104));
+        let exp = opt_some(&e, e.program.make_char(104));
         assert_deep(&mut e, "first", exp);
-        let exp = opt_some(&e, Value::Char(233));
+        let exp = opt_some(&e, e.program.make_char(233));
         assert_deep(&mut e, "second", exp);
         let exp = opt_none(&e);
         assert_deep(&mut e, "oob", exp);
@@ -504,7 +504,7 @@ fn m10_positive_pure_functions() {
         assert_deep(&mut e, "byte2", exp);
         let exp = opt_none(&e);
         assert_deep(&mut e, "byteOob", exp);
-        let exp = opt_some(&e, Value::Char(104));
+        let exp = opt_some(&e, e.program.make_char(104));
         assert_deep(&mut e, "cpH", exp);
         let exp = opt_none(&e);
         assert_deep(&mut e, "cpSurrogate", exp);

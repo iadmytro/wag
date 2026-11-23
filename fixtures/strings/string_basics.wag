@@ -1,10 +1,10 @@
 -- String basics (§3 / §9): a packed UTF-8 byte buffer, non-pointer-free and linear.
 -- Pure functions so the pipeline harness can drive them via `call_fn`.
 
--- Length in bytes.
+-- Length in codepoints (D089).
 lenHello = Int:  -> stringLen "hello"
 
--- "hé" = 'h' (1 byte) + 'é' (2 bytes) = 3 bytes, though 2 codepoints.
+-- "hé" = 'h' + 'é' = 2 codepoints (3 bytes).
 lenUtf8 = Int:  -> stringLen "hé"
 
 -- Concatenation then length.

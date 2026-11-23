@@ -447,6 +447,15 @@ pub fn pretty_program(program: &Program) -> String {
                     ));
                 }
             }
+            Item::ConstrainedDatatype(c) => {
+                s.push_str(&format!(
+                    "{} = {}: {} -> {}\n",
+                    c.name,
+                    pretty_type(&c.sig),
+                    c.param,
+                    pretty_expr(&c.body)
+                ));
+            }
         }
     }
     s

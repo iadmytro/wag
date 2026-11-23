@@ -47,8 +47,28 @@ impl<'p> Engine<'p> {
             CtorKind::User => {}
         }
 
-        // User constructor: owned Data value.
-        Ok(Value::Data(entry.id, args))
+        // Constrained ctor: evaluate the decider body, then wrap in Some/None.
+        if let Some(body_fn) = entry.constrained_body {
+            let ctor_id = entry.id;
+            // Evaluate the decider (Bool) with a clone; keep originals for construction.
+            let control = self.dispatch(body_fn, args.clone())?;
+            let decider_result = match control {
+                crate::control::Control::Return(v) => v,
+                _ => return Err(VmError::Panic("constrained ctor decider did not return a value".into())),
+            };
+            let accepted = matches!(decider_result, Value::Bool(true));
+            if accepted {
+                let inner = Value::data_value(ctor_id, args);
+                let some_id = self.opt_some_id();
+                return Ok(Value::data_value(some_id, vec![inner]));
+            } else {
+                let none_id = self.opt_none_id();
+                return Ok(Value::Data(none_id, vec![]));
+            }
+        }
+
+        // User constructor: owned Data value (Data1 for single-field).
+        Ok(Value::data_value(entry.id, args))
     }
 
     // ─── Move-based pattern matching (§4.3.2: no implicit copy) ────────────────
@@ -59,7 +79,7 @@ impl<'p> Engine<'p> {
             Pat::Wildcard { .. } | Pat::Var { .. } => true,
             Pat::Literal { lit, .. } => match lit {
                 LitPat::Int(n) => matches!(value, Value::Int(v) if v == n),
-                LitPat::Str(s) => value.as_str().map(|v| v == s.as_str()).unwrap_or(false),
+                LitPat::Str(s) => self.program.value_to_string(value).map(|v| v == s.as_str()).unwrap_or(false),
             },
             Pat::Product { elems, .. } => self.peek_product(elems, value),
             Pat::Ctor { name, args, .. } => {
@@ -111,6 +131,9 @@ impl<'p> Engine<'p> {
                 return match value {
                     Value::Data(ctor, fields) => {
                         *ctor == entry.id && self.peek_fields(args, fields)
+                    }
+                    Value::Data1(ctor, field) => {
+                        *ctor == entry.id && self.peek_fields(args, std::slice::from_ref(field.as_ref()))
                     }
                     _ => false,
                 };
@@ -179,6 +202,7 @@ impl<'p> Engine<'p> {
             CtorKind::Pair | CtorKind::Triple | CtorKind::User => {
                 match value {
                     Value::Data(_, fields) => fields,
+                    Value::Data1(_, field) => vec![*field],
                     other => {
                         return Err(VmError::Panic(format!(
                             "ctor destructure: expected Data, got {other:?}"

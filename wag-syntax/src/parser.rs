@@ -331,7 +331,7 @@ fn desugar_program(program: &mut Program) {
             Item::Actor(a) => desugar_expr(&mut a.body),
             Item::Method(m) => desugar_expr(&mut m.body),
             Item::Constructor(_) => {}
-            Item::TypeAlias(_) | Item::ParametricType(_) => {}
+            Item::TypeAlias(_) | Item::ParametricType(_) | Item::ConstrainedDatatype(_) => {}
             Item::Class(_) | Item::Instance(_) => {}
         }
     }

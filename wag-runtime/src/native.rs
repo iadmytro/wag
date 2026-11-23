@@ -204,7 +204,7 @@ fn process_std(
             } else if cid == write_line {
                 let val = builtin_io::field_ref(fields, 0)
                     .ok_or_else(|| RuntimeError::Panic("WriteLine missing String".into()))?;
-                write_stdout(&inner.io, val).map_err(RuntimeError::from)?;
+                write_stdout(&inner.io, &inner.program, val).map_err(RuntimeError::from)?;
             } else {
                 return Err(RuntimeError::Panic(format!(
                     "@SysStd: unknown message ctor {}",
@@ -281,7 +281,7 @@ fn process_file(
             }
             let path_val = builtin_io::field_ref(fields, 0)
                 .ok_or_else(|| RuntimeError::Panic("ReadFileRaw missing path".into()))?;
-            let path = builtin_io::string_value_to_str(path_val)
+            let path = builtin_io::string_value_to_str(&inner.program, path_val)
                 .map_err(RuntimeError::from)?;
             let requester = builtin_io::field_actor(fields, 1)
                 .ok_or_else(|| RuntimeError::Panic("ReadFileRaw requester not Actor".into()))?;
@@ -466,7 +466,7 @@ fn forward_to_sysconn(
     ctor: ConstructorId,
     fields: Vec<Value>,
 ) -> Result<(), RuntimeError> {
-    enqueue_msg(inner, sender, target, Value::Data(ctor, fields))
+    enqueue_msg(inner, sender, target, Value::data_value(ctor, fields))
 }
 
 fn process_conn(

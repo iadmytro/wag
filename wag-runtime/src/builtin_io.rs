@@ -172,16 +172,15 @@ impl BuiltinCtors {
 pub fn match_data_ctor<'a>(msg: &'a Value) -> Option<(ConstructorId, &'a [Value])> {
     match msg {
         Value::Data(ctor, fields) => Some((*ctor, fields.as_slice())),
+        Value::Data1(ctor, field) => Some((*ctor, std::slice::from_ref(field.as_ref()))),
         _ => None,
     }
 }
 
 /// Write a `String` payload to the captured stdout buffer.
-pub fn write_stdout(io: &IoConfig, val: &Value) -> Result<(), VmError> {
-    let s = match val {
-        Value::Str(s) => s,
-        _ => return Err(VmError::Panic("Write payload is not a String".into())),
-    };
+pub fn write_stdout(io: &IoConfig, program: &LoadedProgram, val: &Value) -> Result<(), VmError> {
+    let s = program.value_to_string(val)
+        .ok_or_else(|| VmError::Panic("Write payload is not a String".into()))?;
     let mut out = io.stdout.lock().unwrap();
     out.write_all(s.as_bytes())
         .map_err(|e| VmError::Panic(format!("stdout write: {e}")))?;
@@ -324,26 +323,47 @@ pub fn field_ref(fields: &[Value], i: usize) -> Option<&Value> {
 }
 
 /// Extract a `String` value into a Rust `String`.
-pub fn string_value_to_str(v: &Value) -> Result<String, VmError> {
-    match v {
-        Value::Str(s) => Ok(s.clone()),
-        _ => Err(VmError::Panic("expected String value".into())),
-    }
+pub fn string_value_to_str(program: &LoadedProgram, v: &Value) -> Result<String, VmError> {
+    program.value_to_string(v)
+        .ok_or_else(|| VmError::Panic("expected String value".into()))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use wag_interp::{CtorEntry, CtorKind, ConstructorId, LoadedProgram};
+    use std::collections::HashMap;
+
+    fn test_program() -> LoadedProgram {
+        let ctors = vec![
+            CtorEntry { name: "String".into(), id: ConstructorId(0), type_name: "String".into(), arity: 1, pointer_free: false, kind: CtorKind::User, field_is_ref: vec![], resident: false, field_names: vec![], constrained_body: None },
+            CtorEntry { name: "VBuf".into(), id: ConstructorId(1), type_name: "Vec".into(), arity: 3, pointer_free: false, kind: CtorKind::User, field_is_ref: vec![], resident: false, field_names: vec![], constrained_body: None },
+            CtorEntry { name: "Some".into(), id: ConstructorId(2), type_name: "Option".into(), arity: 1, pointer_free: false, kind: CtorKind::User, field_is_ref: vec![], resident: false, field_names: vec![], constrained_body: None },
+            CtorEntry { name: "None".into(), id: ConstructorId(3), type_name: "Option".into(), arity: 0, pointer_free: true, kind: CtorKind::User, field_is_ref: vec![], resident: false, field_names: vec![], constrained_body: None },
+        ];
+        let ctor_by_name: HashMap<String, ConstructorId> = ctors.iter().map(|c| (c.name.clone(), c.id)).collect();
+        LoadedProgram {
+            functions: vec![],
+            fn_by_name: HashMap::new(),
+            fn_overloads: HashMap::new(),
+            ctors,
+            ctor_by_name,
+            method_fns: HashMap::new(),
+            actors: HashMap::new(),
+            cell_reuse: false,
+        }
+    }
 
     /// `Write` must land in the capture buffer exactly once with exact content.
     #[test]
     fn write_stdout_captures_payload_once() {
         let io = IoConfig::default();
-        write_stdout(&io, &Value::Str("hi".into())).unwrap();
+        let prog = test_program();
+        write_stdout(&io, &prog, &prog.make_string("hi")).unwrap();
         assert_eq!(io.take_stdout_string(), "hi");
 
         // a second Write appends, still no duplication
-        write_stdout(&io, &Value::Str("hi".into())).unwrap();
+        write_stdout(&io, &prog, &prog.make_string("hi")).unwrap();
         assert_eq!(io.take_stdout_string(), "hihi");
     }
 
@@ -351,6 +371,7 @@ mod tests {
     #[test]
     fn write_stdout_rejects_non_string() {
         let io = IoConfig::default();
-        assert!(write_stdout(&io, &Value::Int(1)).is_err());
+        let prog = test_program();
+        assert!(write_stdout(&io, &prog, &Value::Int(1)).is_err());
     }
 }

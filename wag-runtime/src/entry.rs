@@ -57,7 +57,7 @@ pub fn run_main_with_io(
     // cons-list fallback, so the prelude List ctors are guaranteed present.
     let ctors = PreludeListCtors::from_program(rt.program())
         .ok_or_else(|| RuntimeError::Panic("prelude List ctors not found".into()))?;
-    let elems: Vec<Value> = argv.iter().map(|s| Value::Str(s.clone())).collect();
+    let elems: Vec<Value> = argv.iter().map(|s| rt.program().make_string(s)).collect();
     let argv_val = build_prelude_list(elems, ctors).map_err(RuntimeError::Vm)?;
     // @main initial state is None (§5.4).
     let none_id = rt.program().opt_none_id();

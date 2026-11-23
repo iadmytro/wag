@@ -673,6 +673,13 @@ impl<'a> Parser<'a> {
         self.expect_eq()?;
 
         // Disambiguate by lookahead on the RHS
+        // Constrained datatype: `Name = Sig: param -> body` (has `->` AND `:` at top level).
+        if name_is_upper
+            && self.lookahead_has_top_level_arrow()
+            && self.lookahead_has_top_level_colon()
+        {
+            return self.parse_constrained_datatype(&name, &name_span);
+        }
         // Function type (has `->` at top level) → TypeAlias
         if name_is_upper && self.lookahead_has_top_level_arrow() {
             Self::reject_type_var_name(&name, &name_span)?;
@@ -848,6 +855,39 @@ impl<'a> Parser<'a> {
             name: mname,
             signature,
             params,
+            body,
+            span,
+        }))
+    }
+
+    /// Parse a constrained datatype: `Name = Sig: param -> body`.
+    /// The Sig is a function type whose result is `Name` or `Option Name`.
+    /// The body is a `Bool` decider; the VM derives `Some`/`None` from it.
+    fn parse_constrained_datatype(&mut self, name: &str, name_span: &Span) -> Result<Item, ParseError> {
+        Self::reject_type_var_name(name, name_span)?;
+        let sig = self.parse_type_full(0)?;
+        self.expect(&Token::Colon)?;
+        let param = match self.peek_kind() {
+            Some(Token::Ident(s)) => {
+                let s = s.clone();
+                self.pos += 1;
+                s
+            }
+            _ => {
+                let span = self.span_here();
+                return Err(ParseError::new(
+                    span,
+                    "expected parameter name",
+                ));
+            }
+        };
+        self.expect(&Token::Arrow)?;
+        let body = self.parse_block_or_expr()?;
+        let span = Span::new(name_span.start, body.span().end);
+        Ok(Item::ConstrainedDatatype(ConstrainedDatatypeDecl {
+            name: name.to_string(),
+            sig,
+            param,
             body,
             span,
         }))
@@ -1858,5 +1898,101 @@ fn find_method_call(expr: &Expr) -> Option<Span> {
         Lambda { body, .. } => find_method_call(body),
         Send { target, msg, .. } => find_method_call(target).or_else(|| find_method_call(msg)),
         Comprehension { .. } => None, // desugared before this walk
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::super::parse;
+    use crate::ast::Item;
+
+    /// Parse a single-item program and return the item.
+    fn parse_one(src: &str) -> Item {
+        let prog = parse(src).unwrap_or_else(|e| panic!("parse failed: {e}\n---\n{src}\n---"));
+        assert_eq!(prog.items.len(), 1, "expected 1 item, got {}", prog.items.len());
+        prog.items.into_iter().next().unwrap()
+    }
+
+    // -- Constrained datatype: positive --------------------------------------
+
+    #[test]
+    fn constrained_datatype_option_result() {
+        let item = parse_one("Char = Int -> Option Char: cp -> True");
+        let Item::ConstrainedDatatype(cd) = &item else {
+            panic!("expected ConstrainedDatatype, got {item:?}");
+        };
+        assert_eq!(cd.name, "Char");
+        assert_eq!(cd.param, "cp");
+    }
+
+    #[test]
+    fn constrained_datatype_total_result() {
+        // Result is `Name` (not `Option Name`) — total constructor, no body needed
+        // but the syntax still requires `: param -> body`.
+        let item = parse_one("Foo = Int -> Foo: x -> True");
+        let Item::ConstrainedDatatype(cd) = &item else {
+            panic!("expected ConstrainedDatatype, got {item:?}");
+        };
+        assert_eq!(cd.name, "Foo");
+        assert_eq!(cd.param, "x");
+    }
+
+    #[test]
+    fn constrained_datatype_with_function_call_body() {
+        let item = parse_one("Char = Int -> Option Char: cp -> isScalar cp");
+        let Item::ConstrainedDatatype(cd) = &item else {
+            panic!("expected ConstrainedDatatype, got {item:?}");
+        };
+        assert_eq!(cd.name, "Char");
+        // Body is a function call: `isScalar cp`
+        assert!(matches!(&cd.body, crate::ast::Expr::Apply { .. }));
+    }
+
+    #[test]
+    fn constrained_datatype_string() {
+        let item = parse_one("String = Vec Int -> Option String: b -> validUtf8 b");
+        let Item::ConstrainedDatatype(cd) = &item else {
+            panic!("expected ConstrainedDatatype, got {item:?}");
+        };
+        assert_eq!(cd.name, "String");
+        assert_eq!(cd.param, "b");
+    }
+
+    // -- Disambiguation from TypeAlias ----------------------------------------
+
+    #[test]
+    fn type_alias_no_colon() {
+        // `Name = TypeExpr` with `->` but NO `:` → TypeAlias, not ConstrainedDatatype.
+        let item = parse_one("Foo = Int -> Int");
+        assert!(matches!(item, Item::TypeAlias(_)), "expected TypeAlias, got {item:?}");
+    }
+
+    #[test]
+    fn type_alias_function_type() {
+        // `Name = T1 -> T2` — has `->` but NO `:` → TypeAlias (function type).
+        let item = parse_one("MyFn = Int -> Int");
+        assert!(matches!(item, Item::TypeAlias(_)), "expected TypeAlias, got {item:?}");
+    }
+
+    #[test]
+    fn constrained_datatype_has_colon() {
+        // `Name = Sig: param -> body` — has both `->` AND `:` → ConstrainedDatatype.
+        let item = parse_one("Foo = Int -> Option Foo: x -> True");
+        assert!(matches!(item, Item::ConstrainedDatatype(_)), "expected ConstrainedDatatype, got {item:?}");
+    }
+
+    // -- Constrained datatype in a multi-item program -------------------------
+
+    #[test]
+    fn constrained_datatype_among_other_items() {
+        let src = "isScalar = Int -> Bool: cp -> cp >= 0\nChar = Int -> Option Char: cp -> isScalar cp";
+        let prog = parse(src).unwrap_or_else(|e| panic!("parse failed: {e}"));
+        assert_eq!(prog.items.len(), 2);
+        // First item is a function (has `->` and `:` but result is Bool, not Name/Option Name).
+        // Actually: `isScalar = Int -> Bool: cp -> cp >= 0` — this is a function with a
+        // type annotation, NOT a constrained datatype (result is Bool, not Name).
+        // The parser should parse it as a Func.
+        assert!(matches!(&prog.items[0], Item::Func(_)), "expected Func, got {:?}", prog.items[0]);
+        assert!(matches!(&prog.items[1], Item::ConstrainedDatatype(_)), "expected ConstrainedDatatype, got {:?}", prog.items[1]);
     }
 }
